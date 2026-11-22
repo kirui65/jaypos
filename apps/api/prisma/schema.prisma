@@ -84,6 +84,7 @@ model Shop {
   shifts         Shift[]
   settings       Setting[]
   auditLogs      AuditLog[]
+  loginAttempts  LoginAttempt[]
   variants       ProductVariant[]
   bundleItems    BundleItem[]
   customerPreferences CustomerPreference[]
@@ -147,9 +148,10 @@ model User {
   updatedAt              DateTime     @updatedAt @map("updated_at")
   shop                   Shop         @relation(fields: [shopId], references: [id])
   role                   Role         @relation(fields: [roleId], references: [id])
-  createdByUser          User?        @relation("UserCreator", fields: [createdBy], references: [id])
+  createdByUser          User?        @relation("UserCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   createdUsers           User[]       @relation("UserCreator")
   auditLogs              AuditLog[]
+  authSessions           AuthSession[]
   stockMovements         StockMovement[]
   sales                  Sale[]       @relation("SaleSeller")
   refundsRequested       Refund[]     @relation("RefundRequester")
@@ -159,6 +161,32 @@ model User {
   @@unique([shopId, username])
   @@index([shopId, active])
   @@map("users")
+}
+
+model AuthSession {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid @map("user_id")
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("auth_sessions")
+}
+
+model LoginAttempt {
+  id         String   @id @default(uuid()) @db.Uuid
+  shopId     String   @db.Uuid @map("shop_id")
+  identifier String
+  ip         String
+  succeeded  Boolean
+  createdAt  DateTime @default(now()) @map("created_at")
+  shop       Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, identifier, ip, createdAt])
+  @@map("login_attempts")
 }
 
 model AuditLog {

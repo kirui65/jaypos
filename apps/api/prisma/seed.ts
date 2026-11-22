@@ -2,7 +2,7 @@ import "dotenv/config";
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
-import { DEFAULT_PERMISSION_KEYS } from "@eminent/shared";
+import { DEFAULT_PERMISSION_KEYS, DEFAULT_STAFF_PERMISSION_KEYS } from "@eminent/shared";
 
 const prisma = new PrismaClient();
 const permissionDescriptions: Record<string, string> = {
@@ -54,13 +54,7 @@ async function main() {
       });
     }),
   );
-  const staffPermissionKeys = new Set([
-    "sales.create",
-    "sales.read.own",
-    "stock.read",
-    "customers.write",
-    "refunds.request",
-  ]);
+  const staffPermissionKeys = new Set<string>(DEFAULT_STAFF_PERMISSION_KEYS);
   for (const permission of permissions) {
     const allowedForStaff = staffPermissionKeys.has(permission.key);
     await prisma.rolePermission.upsert({

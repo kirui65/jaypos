@@ -4,9 +4,9 @@ Last updated: 2026-11-22
 
 ## Current state
 
-- **Approved scope:** Phase 1, milestones M1–M8. M1 is complete; resume at **M2: Authentication and staff management**. The existing approval covers the planned milestones; do not restart at M1.
+- **Approved scope:** Phase 1, milestones M1–M8. M1 and M2 are complete; resume at **M3: Catalog**. The existing approval covers the planned milestones; do not restart at M1.
 - **Source of truth:** `/docs/SPEC.md`. `/SPEC.md` and `/docs/SPEC.md` currently contain identical copies. Preserve both unless asked to change them.
-- **Latest implementation commit:** `b2ff2a3` — `feat: establish phase 1 POS foundation`.
+- **Latest implementation commit:** `HEAD` — `feat: add authentication and staff management`.
 - **Working tree:** implementation is committed. The two original spec files are untracked in this checkout; they were not included in the M1 commit.
 
 ## Completed: M1 — Foundation
@@ -50,3 +50,24 @@ At the end of M2, run tests, lint, typecheck, and formatting check; fix failures
 - Use `corepack pnpm` commands when a `pnpm` shim is not available.
 - No `.env` or production secrets have been created or committed. The seed generates a one-time admin password if `ADMIN_SEED_PASSWORD` is empty and prints it when creating the initial account.
 - Lipwa provider field names and callback verification are still a `TODO(lipwa)`; consult current documentation before M6.
+
+## Completed: M2 — Authentication and staff management
+
+- Added opaque 256-bit server sessions, stored as SHA-256 token hashes, in HttpOnly SameSite cookies with an 8-hour expiry and revocation.
+- Added username/email login, logout, current-user lookup, forced password changes, own PIN setup/change and PIN unlock, failed-login/PIN logging, and a five-failure/15-minute lockout per identifier and IP.
+- Added configured-origin CORS and unsafe-request origin checks, security headers, and default authentication for API routes.
+- Added server-side role permission checks and staff-only permission-removal overrides. Staff management endpoints support create, edit, force logout, password/PIN reset, activation/deactivation, and hard-delete versus archive based on account history. Staff operations are audited; staff endpoints cannot target admin accounts.
+- Added database migration for auth sessions and login-attempt records, plus permission/auth route tests.
+
+## M2 checks
+
+- `corepack pnpm test` — passed, 13 tests.
+- `corepack pnpm lint` — passed.
+- `corepack pnpm typecheck` — passed.
+- `corepack pnpm format:check` — passed.
+- Prisma schema validation — passed.
+- **Not run:** applying the M2 migration. Docker is unavailable and nothing is listening on `localhost:5432`; retry when PostgreSQL is available.
+
+## Next: M3 — Catalog
+
+Implement configurable departments and product types, attribute templates, products and variants, size/colour grids, perfume decant links, bundles, tester stock representation, and staff-safe serialization. Follow the acceptance criteria in `/docs/PHASE1_PLAN.md`; keep M4 stock mutations out of scope. At milestone end, run the required checks, create a focused commit, and update this file.

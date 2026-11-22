@@ -18,3 +18,11 @@ export const DEFAULT_PERMISSION_KEYS = [
   "settings.manage",
   "audit.read",
 ] as const;
+
+export const DEFAULT_STAFF_PERMISSION_KEYS = [
+  "sales.create",
+  "sales.read.own",
+  "stock.read",
+  "customers.write",
+  "refunds.request",
+] as const;
