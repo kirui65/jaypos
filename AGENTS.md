@@ -1,6 +1,7 @@
 # Eminent Jay Engineering Rules
 
 - Read `/docs/SPEC.md` fully before coding; it is the product source of truth.
+- Read `/docs/PROGRESS.md` at session start for the current milestone and handoff; update it at each milestone end.
 - Current scope: Phase 1 core POS only. Do not build Phase 2–4 features unless asked.
 - Use pnpm workspaces: `apps/web` (React, TypeScript, Vite, Tailwind, TanStack Query, React Router), `apps/api` (Node 20, strict TypeScript, Express, Zod), and `packages/shared` (shared types, schemas, constants, money and phone utilities).
 - Use PostgreSQL and Prisma migrations; Docker Compose is for local PostgreSQL. Never commit secrets; maintain `.env.example`.
