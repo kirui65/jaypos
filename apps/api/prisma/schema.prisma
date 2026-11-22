@@ -1,0 +1,557 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum StockMovementType {
+  purchase
+  sale
+  refund_restock
+  adjustment
+  damage
+  tester
+  transfer_in
+  transfer_out
+  stock_take
+  decant
+}
+
+enum SaleStatus {
+  draft
+  completed
+  voided
+  partially_refunded
+  refunded
+}
+
+enum PaymentMethod {
+  cash
+  mpesa_stk
+  mpesa_manual
+  card
+  credit
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  failed
+  cancelled
+  expired
+  pending_verification
+  unmatched
+}
+
+enum RefundStatus {
+  requested
+  approved
+  rejected
+}
+
+enum RefundDisposition {
+  restock
+  damaged
+}
+
+enum CashMovementType {
+  in
+  out
+}
+
+model Shop {
+  id             String             @id @default(uuid()) @db.Uuid
+  name           String
+  address        String?
+  phone          String?
+  kraPin         String?            @map("kra_pin")
+  logoUrl        String?            @map("logo_url")
+  settingsJson   Json               @default("{}") @map("settings_json")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+  users          User[]
+  departments    Department[]
+  productTypes   ProductType[]
+  brands         Brand[]
+  products       Product[]
+  stockLevels    StockLevel[]
+  stockMovements StockMovement[]
+  customers      Customer[]
+  sales          Sale[]
+  shifts         Shift[]
+  settings       Setting[]
+  auditLogs      AuditLog[]
+  variants       ProductVariant[]
+  bundleItems    BundleItem[]
+  customerPreferences CustomerPreference[]
+  saleItems      SaleItem[]
+  payments       Payment[]
+  refunds        Refund[]
+  refundItems    RefundItem[]
+  cashMovements  CashMovement[]
+
+  @@map("shops")
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  name        String           @unique
+  description String?
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  key         String           @unique
+  description String?
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid @map("role_id")
+  permissionId String     @db.Uuid @map("permission_id")
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model User {
+  id                     String       @id @default(uuid()) @db.Uuid
+  shopId                 String       @db.Uuid @map("shop_id")
+  roleId                 String       @db.Uuid @map("role_id")
+  name                   String
+  username               String
+  email                  String?
+  phone                  String?
+  passwordHash           String       @map("password_hash")
+  pinHash                String?      @map("pin_hash")
+  discountLimitPct       Int          @default(0) @map("discount_limit_pct")
+  permissionOverridesJson Json?       @map("permission_overrides_json")
+  mustChangePassword     Boolean      @default(true) @map("must_change_password")
+  active                 Boolean      @default(true)
+  archivedAt             DateTime?    @map("archived_at")
+  createdBy              String?      @db.Uuid @map("created_by")
+  lastLoginAt            DateTime?    @map("last_login_at")
+  totpSecret             String?      @map("totp_secret")
+  createdAt              DateTime     @default(now()) @map("created_at")
+  updatedAt              DateTime     @updatedAt @map("updated_at")
+  shop                   Shop         @relation(fields: [shopId], references: [id])
+  role                   Role         @relation(fields: [roleId], references: [id])
+  createdByUser          User?        @relation("UserCreator", fields: [createdBy], references: [id])
+  createdUsers           User[]       @relation("UserCreator")
+  auditLogs              AuditLog[]
+  stockMovements         StockMovement[]
+  sales                  Sale[]       @relation("SaleSeller")
+  refundsRequested       Refund[]     @relation("RefundRequester")
+  refundsApproved        Refund[]     @relation("RefundApprover")
+  shifts                 Shift[]
+
+  @@unique([shopId, username])
+  @@index([shopId, active])
+  @@map("users")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  shopId     String   @db.Uuid @map("shop_id")
+  userId     String?  @db.Uuid @map("user_id")
+  action     String
+  entity     String
+  entityId   String?  @map("entity_id")
+  beforeJson Json?    @map("before_json")
+  afterJson  Json?    @map("after_json")
+  device     String?
+  ip         String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  shop       Shop     @relation(fields: [shopId], references: [id])
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([shopId, createdAt])
+  @@index([entity, entityId])
+  @@map("audit_logs")
+}
+
+model Department {
+  id        String    @id @default(uuid()) @db.Uuid
+  shopId    String    @db.Uuid @map("shop_id")
+  name      String
+  code      String
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  shop      Shop      @relation(fields: [shopId], references: [id])
+  products  Product[]
+
+  @@unique([shopId, code])
+  @@map("departments")
+}
+
+model ProductType {
+  id                    String        @id @default(uuid()) @db.Uuid
+  shopId                String        @db.Uuid @map("shop_id")
+  name                  String
+  code                  String
+  parentId              String?       @db.Uuid @map("parent_id")
+  attributeTemplateJson Json          @default("{}") @map("attribute_template_json")
+  taxCategory           String?       @map("tax_category")
+  returnWindowDays      Int?          @map("return_window_days")
+  active                Boolean       @default(true)
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+  shop                  Shop          @relation(fields: [shopId], references: [id])
+  parent                ProductType?  @relation("TypeTree", fields: [parentId], references: [id])
+  children              ProductType[] @relation("TypeTree")
+  products              Product[]
+
+  @@unique([shopId, code])
+  @@map("product_types")
+}
+
+model Brand {
+  id        String    @id @default(uuid()) @db.Uuid
+  shopId    String    @db.Uuid @map("shop_id")
+  name      String
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  shop      Shop      @relation(fields: [shopId], references: [id])
+  products  Product[]
+
+  @@unique([shopId, name])
+  @@map("brands")
+}
+
+model Product {
+  id                    String         @id @default(uuid()) @db.Uuid
+  shopId                String         @db.Uuid @map("shop_id")
+  departmentId          String         @db.Uuid @map("department_id")
+  productTypeId         String         @db.Uuid @map("product_type_id")
+  brandId               String?        @db.Uuid @map("brand_id")
+  name                  String
+  description           String?
+  attributesJson        Json           @default("{}") @map("attributes_json")
+  imageUrl              String?        @map("image_url")
+  active                Boolean        @default(true)
+  createdAt             DateTime       @default(now()) @map("created_at")
+  updatedAt             DateTime       @updatedAt @map("updated_at")
+  shop                  Shop           @relation(fields: [shopId], references: [id])
+  department            Department     @relation(fields: [departmentId], references: [id])
+  productType           ProductType    @relation(fields: [productTypeId], references: [id])
+  brand                 Brand?         @relation(fields: [brandId], references: [id])
+  variants              ProductVariant[]
+
+  @@index([shopId, name])
+  @@map("products")
+}
+
+model ProductVariant {
+  id                 String          @id @default(uuid()) @db.Uuid
+  shopId             String          @db.Uuid @map("shop_id")
+  productId          String          @db.Uuid @map("product_id")
+  sku                String          @unique
+  barcode            String?         @unique
+  attributesJson     Json            @default("{}") @map("attributes_json")
+  priceCents         Int             @map("price_cents")
+  costCents          Int             @map("cost_cents")
+  reorderLevel       Int             @default(0) @map("reorder_level")
+  batchNo            String?         @map("batch_no")
+  expiryDate         DateTime?       @db.Date @map("expiry_date")
+  isBulk             Boolean         @default(false) @map("is_bulk")
+  bulkVolumeMl       Int?            @map("bulk_volume_ml")
+  parentBulkVariantId String?         @db.Uuid @map("parent_bulk_variant_id")
+  mlPerUnit          Int?            @map("ml_per_unit")
+  isTesterAllowed    Boolean         @default(false) @map("is_tester_allowed")
+  active             Boolean         @default(true)
+  createdAt          DateTime        @default(now()) @map("created_at")
+  updatedAt          DateTime        @updatedAt @map("updated_at")
+  product            Product         @relation(fields: [productId], references: [id])
+  shop               Shop            @relation(fields: [shopId], references: [id])
+  parentBulkVariant  ProductVariant? @relation("BulkDecants", fields: [parentBulkVariantId], references: [id])
+  decantVariants     ProductVariant[] @relation("BulkDecants")
+  stockLevels        StockLevel[]
+  stockMovements     StockMovement[]
+  bundleComponents   BundleItem[]    @relation("Bundle")
+  bundleParents      BundleItem[]    @relation("BundleComponent")
+  saleItems          SaleItem[]
+
+  @@index([productId, active])
+  @@map("product_variants")
+}
+
+model BundleItem {
+  shopId            String         @db.Uuid @map("shop_id")
+  bundleVariantId   String         @db.Uuid @map("bundle_variant_id")
+  componentVariantId String         @db.Uuid @map("component_variant_id")
+  quantity          Int
+  bundle            ProductVariant @relation("Bundle", fields: [bundleVariantId], references: [id])
+  component         ProductVariant @relation("BundleComponent", fields: [componentVariantId], references: [id])
+  shop              Shop           @relation(fields: [shopId], references: [id])
+
+  @@id([shopId, bundleVariantId, componentVariantId])
+  @@map("bundle_items")
+}
+
+model StockLevel {
+  id          String         @id @default(uuid()) @db.Uuid
+  shopId      String         @db.Uuid @map("shop_id")
+  variantId   String         @db.Uuid @map("variant_id")
+  quantity    Int            @default(0)
+  mlRemaining Int?           @map("ml_remaining")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+  shop        Shop           @relation(fields: [shopId], references: [id])
+  variant     ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([shopId, variantId])
+  @@map("stock_levels")
+}
+
+model StockMovement {
+  id            String            @id @default(uuid()) @db.Uuid
+  shopId        String            @db.Uuid @map("shop_id")
+  variantId     String            @db.Uuid @map("variant_id")
+  quantityDelta Int               @default(0) @map("quantity_delta")
+  mlDelta       Int?              @map("ml_delta")
+  type          StockMovementType
+  referenceType String?           @map("reference_type")
+  referenceId   String?           @db.Uuid @map("reference_id")
+  reason        String?
+  userId        String?           @db.Uuid @map("user_id")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  shop          Shop              @relation(fields: [shopId], references: [id])
+  variant       ProductVariant    @relation(fields: [variantId], references: [id])
+  user          User?             @relation(fields: [userId], references: [id])
+
+  @@index([shopId, variantId, createdAt])
+  @@index([referenceType, referenceId])
+  @@map("stock_movements")
+}
+
+model Customer {
+  id            String               @id @default(uuid()) @db.Uuid
+  shopId        String               @db.Uuid @map("shop_id")
+  name          String?
+  phone         String
+  email         String?
+  birthday      DateTime?            @db.Date
+  gender        String?
+  smsConsent    Boolean              @default(false) @map("sms_consent")
+  consentAt     DateTime?            @map("consent_at")
+  consentSource String?              @map("consent_source")
+  optedOutAt    DateTime?            @map("opted_out_at")
+  loyaltyPoints Int                  @default(0) @map("loyalty_points")
+  tier          String?
+  creditBalanceCents Int             @default(0) @map("credit_balance_cents")
+  notes         String?
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+  shop          Shop                 @relation(fields: [shopId], references: [id])
+  preferences   CustomerPreference?
+  sales         Sale[]
+
+  @@unique([shopId, phone])
+  @@index([shopId, name])
+  @@map("customers")
+}
+
+model CustomerPreference {
+  shopId          String   @db.Uuid @map("shop_id")
+  customerId      String   @id @db.Uuid @map("customer_id")
+  departments     String[] @default([])
+  productTypes    String[] @default([]) @map("product_types")
+  scentFamilies   String[] @default([]) @map("scent_families")
+  likedNotes      String[] @default([]) @map("liked_notes")
+  dislikedNotes   String[] @default([]) @map("disliked_notes")
+  brands          String[] @default([])
+  budgetMinCents  Int?     @map("budget_min_cents")
+  budgetMaxCents  Int?     @map("budget_max_cents")
+  occasions       String[] @default([])
+  sizes           String[] @default([])
+  colours         String[] @default([])
+  notes           String?
+  shop            Shop     @relation(fields: [shopId], references: [id])
+  customer        Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("customer_preferences")
+}
+
+model Sale {
+  id             String        @id @default(uuid()) @db.Uuid
+  shopId         String        @db.Uuid @map("shop_id")
+  clientUuid     String        @unique @db.Uuid @map("client_uuid")
+  receiptNo      String?       @map("receipt_no")
+  deviceId       String?       @map("device_id")
+  shiftId        String        @db.Uuid @map("shift_id")
+  sellerId       String        @db.Uuid @map("seller_id")
+  customerId     String?       @db.Uuid @map("customer_id")
+  status         SaleStatus    @default(draft)
+  subtotalCents  Int           @default(0) @map("subtotal_cents")
+  discountCents  Int           @default(0) @map("discount_cents")
+  taxCents       Int           @default(0) @map("tax_cents")
+  totalCents     Int           @default(0) @map("total_cents")
+  paidCents      Int           @default(0) @map("paid_cents")
+  changeCents    Int           @default(0) @map("change_cents")
+  notes          String?
+  offlineCreatedAt DateTime?   @map("offline_created_at")
+  syncedAt       DateTime?     @map("synced_at")
+  needsReview    Boolean       @default(false) @map("needs_review")
+  reviewReason   String?       @map("review_reason")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+  shop           Shop          @relation(fields: [shopId], references: [id])
+  shift          Shift         @relation(fields: [shiftId], references: [id])
+  seller         User          @relation("SaleSeller", fields: [sellerId], references: [id])
+  customer       Customer?     @relation(fields: [customerId], references: [id])
+  items          SaleItem[]
+  payments       Payment[]
+  refunds        Refund[]
+
+  @@index([shopId, createdAt])
+  @@index([shopId, sellerId, createdAt])
+  @@index([receiptNo])
+  @@map("sales")
+}
+
+model SaleItem {
+  id              String         @id @default(uuid()) @db.Uuid
+  shopId          String         @db.Uuid @map("shop_id")
+  saleId          String         @db.Uuid @map("sale_id")
+  variantId       String         @db.Uuid @map("variant_id")
+  qty             Int
+  mlQty           Int?           @map("ml_qty")
+  unitPriceCents  Int            @map("unit_price_cents")
+  unitCostCents   Int            @map("unit_cost_cents")
+  discountCents   Int            @default(0) @map("discount_cents")
+  taxCents        Int            @default(0) @map("tax_cents")
+  lineTotalCents  Int            @map("line_total_cents")
+  sale            Sale           @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  shop            Shop           @relation(fields: [shopId], references: [id])
+  variant         ProductVariant @relation(fields: [variantId], references: [id])
+  refundItems     RefundItem[]
+
+  @@index([saleId])
+  @@map("sale_items")
+}
+
+model Payment {
+  id                 String        @id @default(uuid()) @db.Uuid
+  shopId             String        @db.Uuid @map("shop_id")
+  saleId             String        @db.Uuid @map("sale_id")
+  method             PaymentMethod
+  status             PaymentStatus @default(pending)
+  amountCents        Int           @map("amount_cents")
+  phone              String?
+  provider           String?
+  providerRequestId  String?       @map("provider_request_id")
+  mpesaReceipt       String?       @map("mpesa_receipt")
+  rawRequestJson     Json?         @map("raw_request_json")
+  rawCallbackJson    Json?         @map("raw_callback_json")
+  verifiedBy         String?       @db.Uuid @map("verified_by")
+  verifiedAt         DateTime?     @map("verified_at")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+  sale               Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  shop               Shop          @relation(fields: [shopId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([providerRequestId])
+  @@map("payments")
+}
+
+model Refund {
+  id          String         @id @default(uuid()) @db.Uuid
+  shopId      String         @db.Uuid @map("shop_id")
+  saleId      String         @db.Uuid @map("sale_id")
+  requestedBy String         @db.Uuid @map("requested_by")
+  approvedBy  String?        @db.Uuid @map("approved_by")
+  status      RefundStatus   @default(requested)
+  reason      String
+  refundMethod PaymentMethod? @map("refund_method")
+  amountCents Int            @map("amount_cents")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+  sale        Sale           @relation(fields: [saleId], references: [id])
+  shop        Shop           @relation(fields: [shopId], references: [id])
+  requester   User           @relation("RefundRequester", fields: [requestedBy], references: [id])
+  approver    User?          @relation("RefundApprover", fields: [approvedBy], references: [id])
+  items       RefundItem[]
+
+  @@index([saleId, status])
+  @@map("refunds")
+}
+
+model RefundItem {
+  id             String            @id @default(uuid()) @db.Uuid
+  shopId         String            @db.Uuid @map("shop_id")
+  refundId       String            @db.Uuid @map("refund_id")
+  saleItemId     String            @db.Uuid @map("sale_item_id")
+  quantity       Int
+  disposition    RefundDisposition
+  refund         Refund            @relation(fields: [refundId], references: [id], onDelete: Cascade)
+  shop           Shop              @relation(fields: [shopId], references: [id])
+  saleItem       SaleItem          @relation(fields: [saleItemId], references: [id])
+
+  @@index([refundId])
+  @@map("refund_items")
+}
+
+model Shift {
+  id                String         @id @default(uuid()) @db.Uuid
+  shopId            String         @db.Uuid @map("shop_id")
+  deviceId          String?        @map("device_id")
+  sellerId          String         @db.Uuid @map("seller_id")
+  openedAt          DateTime       @default(now()) @map("opened_at")
+  closedAt          DateTime?      @map("closed_at")
+  openingCashCents  Int            @map("opening_cash_cents")
+  expectedCashCents Int?           @map("expected_cash_cents")
+  countedCashCents  Int?           @map("counted_cash_cents")
+  varianceCents     Int?           @map("variance_cents")
+  notes             String?
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+  shop              Shop           @relation(fields: [shopId], references: [id])
+  seller            User           @relation(fields: [sellerId], references: [id])
+  sales             Sale[]
+  cashMovements     CashMovement[]
+
+  @@index([shopId, sellerId, openedAt])
+  @@map("shifts")
+}
+
+model CashMovement {
+  id        String           @id @default(uuid()) @db.Uuid
+  shopId    String           @db.Uuid @map("shop_id")
+  shiftId   String           @db.Uuid @map("shift_id")
+  type      CashMovementType
+  amountCents Int            @map("amount_cents")
+  reason    String
+  createdAt DateTime         @default(now()) @map("created_at")
+  shift     Shift            @relation(fields: [shiftId], references: [id])
+  shop      Shop             @relation(fields: [shopId], references: [id])
+
+  @@index([shiftId, createdAt])
+  @@map("cash_movements")
+}
+
+model Setting {
+  id        String   @id @default(uuid()) @db.Uuid
+  shopId    String   @db.Uuid @map("shop_id")
+  key       String
+  valueJson Json     @map("value_json")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  shop      Shop     @relation(fields: [shopId], references: [id])
+
+  @@unique([shopId, key])
+  @@map("settings")
+}
+
