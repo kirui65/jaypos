@@ -6,6 +6,9 @@ import { catalogRouter } from "./catalog/routes.js";
 import { stockRouter } from "./stock/routes.js";
 import { salesRouter } from "./sales/routes.js";
 import { shiftsRouter } from "./shifts/routes.js";
+import { createLipwaCallbackRouter, createPaymentsRouter } from "./payments/routes.js";
+import { getPaymentProvider } from "./payments/provider.js";
+import { refundsRouter } from "./refunds/routes.js";
 
 const healthResponseSchema = z.object({
   status: z.literal("ok"),
@@ -51,10 +54,14 @@ export function createApp() {
     response.json(healthResponseSchema.parse({ status: "ok", service: "eminent-jay-api" }));
   });
   app.use("/api/auth", authRouter);
+  const paymentProvider = getPaymentProvider();
+  app.use("/api/payments/lipwa/callback", createLipwaCallbackRouter(paymentProvider));
   app.use("/api", requireAuth);
   app.use("/api/catalog", catalogRouter);
   app.use("/api/stock", stockRouter);
   app.use("/api/sales", salesRouter);
   app.use("/api/shifts", shiftsRouter);
+  app.use("/api/refunds", refundsRouter);
+  app.use("/api/payments", createPaymentsRouter(paymentProvider));
   return app;
 }

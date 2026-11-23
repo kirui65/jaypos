@@ -159,6 +159,20 @@ async function writeStockChange(
 
 export const stockRouter = Router();
 stockRouter.get(
+  "/damaged",
+  requirePermission("stock.write"),
+  async (request: AuthenticatedRequest, response) => {
+    const levels = await prisma.damagedStockLevel.findMany({
+      where: { shopId: request.authUser!.shopId, quantity: { gt: 0 } },
+      include: {
+        variant: { select: { id: true, sku: true, product: { select: { name: true } } } },
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+    return response.json({ levels });
+  },
+);
+stockRouter.get(
   "/",
   requirePermission("stock.read"),
   async (request: AuthenticatedRequest, response) => {

@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { PaymentStatus, Prisma, SaleStatus } from "@prisma/client";
-import type { PaymentMethod, StockMovementType } from "@prisma/client";
+import { PaymentMethod, PaymentStatus, Prisma, SaleStatus } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
 import { canAccess } from "../auth/permissions.js";
+import { normalizeKenyanPhone } from "@eminent/shared";
 import { requirePermission, type AuthenticatedRequest } from "../auth/middleware.js";
 import { prisma } from "../db.js";
 import { allocateSalePayments, calculateSaleTotals, type SalePayment } from "./math.js";
+import { planStockDemands } from "./inventory.js";
+import PDFDocument from "pdfkit";
 
 const itemInput = z
   .object({
@@ -32,6 +34,13 @@ const saleInput = z
             .strict(),
           z
             .object({
+              method: z.literal("mpesa_stk"),
+              amountCents: z.number().int().positive(),
+              phone: z.string().trim().min(1).max(32),
+            })
+            .strict(),
+          z
+            .object({
               method: z.literal("mpesa_manual"),
               amountCents: z.number().int().positive(),
               mpesaReceipt: z.string().trim().min(1).max(40),
@@ -49,6 +58,10 @@ const saleInput = z
   .refine(
     (value) => new Set(value.items.map(({ variantId }) => variantId)).size === value.items.length,
     { message: "Each variant may appear only once per sale", path: ["items"] },
+  )
+  .refine(
+    (value) => value.payments.filter((payment) => payment.method === "mpesa_stk").length <= 1,
+    { message: "A sale can contain only one STK payment", path: ["payments"] },
   );
 
 const heldCartInput = z
@@ -117,80 +130,22 @@ export function serializeSale(sale: SaleRecord, admin: boolean) {
   };
 }
 
-type StockDemand = {
-  variantId: string;
-  quantity: number;
-  ml: number;
-  movementType: StockMovementType;
-};
-export function planStockDemands(
-  lines: {
-    variantId: string;
-    stockVariantId?: string;
-    quantity: number;
-    mlPerUnit?: number;
-    kind: "regular" | "decant" | "bulk" | "component";
-  }[],
-  bundleComponents: {
-    bundleVariantId: string;
-    componentVariantId: string;
-    quantity: number;
-    bulkVolumeMl?: number | null;
-  }[],
-) {
-  const demands = new Map<string, StockDemand>();
-  const add = (
-    variantId: string,
-    quantity: number,
-    ml: number,
-    movementType: StockMovementType,
-  ) => {
-    const existing = demands.get(variantId);
-    demands.set(variantId, {
-      variantId,
-      quantity: (existing?.quantity ?? 0) + quantity,
-      ml: (existing?.ml ?? 0) + ml,
-      movementType:
-        existing?.movementType === "decant" || movementType === "decant" ? "decant" : "sale",
-    });
-  };
-  for (const line of lines) {
-    const components = bundleComponents.filter(
-      (component) => component.bundleVariantId === line.variantId,
-    );
-    if (components.length) {
-      for (const component of components)
-        add(
-          component.componentVariantId,
-          component.quantity * line.quantity,
-          (component.bulkVolumeMl ?? 0) * component.quantity * line.quantity,
-          "sale",
-        );
-    } else if (line.kind === "decant") {
-      if (!line.mlPerUnit || line.mlPerUnit < 1)
-        throw new Error("Decant variant must have a positive mlPerUnit");
-      if (!line.stockVariantId) throw new Error("Decant variant must link to a bulk stock variant");
-      add(line.stockVariantId, 0, line.mlPerUnit * line.quantity, "decant");
-    } else if (line.kind === "bulk") {
-      if (!line.mlPerUnit || line.mlPerUnit < 1)
-        throw new Error("Bulk variant must have a positive bulkVolumeMl");
-      add(line.variantId, line.quantity, line.mlPerUnit * line.quantity, "sale");
-    } else {
-      add(line.variantId, line.quantity, 0, "sale");
-    }
-  }
-  return [...demands.values()];
-}
-
 function paymentPlan(payments: z.infer<typeof saleInput>["payments"], totalCents: number) {
   const normalized: SalePayment[] = payments.map((payment) => payment);
   const allocated = allocateSalePayments(normalized, totalCents);
   return allocated.applied.map((payment) => ({
     method: payment.method as PaymentMethod,
     status:
-      payment.method === "mpesa_manual" ? PaymentStatus.pending_verification : PaymentStatus.paid,
+      payment.method === "mpesa_stk"
+        ? PaymentStatus.pending
+        : payment.method === "mpesa_manual"
+          ? PaymentStatus.pending_verification
+          : PaymentStatus.paid,
     amountCents: payment.appliedCents,
     ...(payment.method === "mpesa_manual" ? { mpesaReceipt: payment.mpesaReceipt } : {}),
+    ...(payment.method === "mpesa_stk"
+      ? { phone: payment.phone, provider: process.env.PAYMENT_PROVIDER ?? "mock" }
+      : {}),
   }));
 }
 
@@ -225,6 +180,28 @@ salesRouter.post(
     const parsed = saleInput.safeParse(request.body);
     if (!parsed.success)
       return response.status(400).json({ error: "Invalid sale", details: parsed.error.flatten() });
+    let paymentsInput: z.infer<typeof saleInput>["payments"];
+    try {
+      paymentsInput = parsed.data.payments.map((payment) =>
+        payment.method === "mpesa_stk"
+          ? { ...payment, phone: normalizeKenyanPhone(payment.phone) }
+          : payment,
+      );
+    } catch (error) {
+      return response
+        .status(400)
+        .json({ error: error instanceof Error ? error.message : "Invalid phone" });
+    }
+    if (
+      paymentsInput.some(
+        (payment) =>
+          payment.method === "mpesa_stk" &&
+          (payment.amountCents < 1000 || payment.amountCents % 100 !== 0),
+      )
+    )
+      return response
+        .status(400)
+        .json({ error: "Lipwa STK payments must be whole KES amounts of at least KES 10" });
     const user = request.authUser!;
     const shopId = user.shopId;
     const prior = await findSale(shopId, parsed.data.clientUuid);
@@ -338,7 +315,10 @@ salesRouter.post(
             !(await tx.customer.findFirst({ where: { id: parsed.data.customerId, shopId } }))
           )
             throw new Error("Customer not found in this shop");
-          const paymentRows = paymentPlan(parsed.data.payments, total.totalCents);
+          const paymentRows = paymentPlan(paymentsInput, total.totalCents);
+          const hasPendingStk = paymentRows.some(
+            ({ method }) => method === PaymentMethod.mpesa_stk,
+          );
           const bundleComponents = variants.flatMap((variant) =>
             variant.bundleComponents.map(({ component, quantity }) => ({
               bundleVariantId: variant.id,
@@ -368,7 +348,7 @@ salesRouter.post(
             bundleComponents,
           );
           const saleId = randomUUID();
-          for (const demand of demands) {
+          for (const demand of hasPendingStk ? [] : demands) {
             const variant = await tx.productVariant.findFirst({
               where: { id: demand.variantId, shopId },
             });
@@ -441,16 +421,18 @@ salesRouter.post(
               shiftId: shift.id,
               sellerId: user.id,
               customerId: parsed.data.customerId ?? null,
-              status: SaleStatus.completed,
+              status: hasPendingStk ? SaleStatus.draft : SaleStatus.completed,
               subtotalCents: total.subtotalCents,
               discountCents: total.discountCents,
               taxCents: 0,
               totalCents: total.totalCents,
-              paidCents: total.totalCents,
-              changeCents: allocateSalePayments(
-                parsed.data.payments as SalePayment[],
-                total.totalCents,
-              ).changeCents,
+              paidCents: hasPendingStk
+                ? paymentRows
+                    .filter(({ method }) => method !== PaymentMethod.mpesa_stk)
+                    .reduce((sum, { amountCents }) => sum + amountCents, 0)
+                : total.totalCents,
+              changeCents: allocateSalePayments(paymentsInput as SalePayment[], total.totalCents)
+                .changeCents,
               notes: parsed.data.notes ?? null,
               items: {
                 create: lines.map(({ input, variant, unitPriceCents, unitCostCents }) => ({
@@ -481,7 +463,7 @@ salesRouter.post(
             data: {
               shopId,
               userId: user.id,
-              action: "sale.completed",
+              action: hasPendingStk ? "sale.payment_pending" : "sale.completed",
               entity: "sale",
               entityId: sale.id,
               afterJson: {
@@ -491,6 +473,7 @@ salesRouter.post(
                 discountReason: parsed.data.discountReason ?? null,
                 itemCount: sale.items.length,
                 paymentMethods: paymentRows.map(({ method }) => method),
+                awaitingStk: hasPendingStk,
               },
               ip: request.ip ?? null,
             },
@@ -600,5 +583,93 @@ salesRouter.post(
     });
     if (!cart) return response.status(404).json({ error: "Held cart not found" });
     return response.json({ cart });
+  },
+);
+
+salesRouter.get(
+  "/:id/receipt",
+  requirePermission("sales.read.own"),
+  async (request: AuthenticatedRequest, response) => {
+    if (!z.string().uuid().safeParse(request.params.id).success)
+      return response.status(400).json({ error: "Invalid sale id" });
+    const user = request.authUser!;
+    const sale = await prisma.sale.findFirst({
+      where: { id: request.params.id!, shopId: user.shopId },
+      include: {
+        shop: true,
+        seller: { select: { name: true } },
+        items: { include: { variant: { include: { product: true } } } },
+        payments: true,
+      },
+    });
+    if (!sale || (sale.sellerId !== user.id && !canAccess(user, "sales.read.all")))
+      return response.status(404).json({ error: "Sale not found" });
+    await prisma.auditLog.create({
+      data: {
+        shopId: user.shopId,
+        userId: user.id,
+        action: "receipt.reprinted",
+        entity: "sale",
+        entityId: sale.id,
+        afterJson: {
+          receiptNo: sale.receiptNo,
+          format: request.query.format === "pdf" ? "pdf" : "html",
+        },
+      },
+    });
+    const money = (cents: number) => `KES ${(cents / 100).toFixed(2)}`;
+    const esc = (value: string) =>
+      value.replace(
+        /[&<>"']/g,
+        (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!,
+      );
+    const lines = sale.items.map(
+      (item) =>
+        `${item.qty} x ${item.variant.product.name} (${item.variant.sku})  ${money(item.lineTotalCents)}`,
+    );
+    const time = new Intl.DateTimeFormat("en-KE", {
+      timeZone: "Africa/Nairobi",
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(sale.createdAt);
+    const thermalWidth = request.query.width === "58" ? 58 : 80;
+    if (request.query.format === "pdf") {
+      const doc = new PDFDocument({ size: "A4", margin: 48 });
+      response.setHeader("Content-Type", "application/pdf");
+      response.setHeader(
+        "Content-Disposition",
+        `inline; filename="${sale.receiptNo ?? "receipt"}.pdf"`,
+      );
+      doc.pipe(response);
+      doc.fontSize(18).text(sale.shop.name, { align: "center" });
+      doc.moveDown(0.3).fontSize(9).text("COPY", { align: "center" });
+      doc
+        .moveDown()
+        .fontSize(10)
+        .text(
+          `${sale.shop.address ?? ""}\n${sale.shop.phone ?? ""}\n${sale.shop.kraPin ? `KRA PIN: ${sale.shop.kraPin}` : ""}`,
+        );
+      doc
+        .moveDown()
+        .text(`Receipt: ${sale.receiptNo ?? "—"}\nDate: ${time}\nServed by: ${sale.seller.name}`);
+      doc.moveDown().text("----------------------------------------------");
+      for (const line of lines) doc.text(line);
+      doc.moveDown().text("----------------------------------------------");
+      doc.text(
+        `Subtotal: ${money(sale.subtotalCents)}\nDiscount: ${money(sale.discountCents)}\nTotal: ${money(sale.totalCents)}\nPaid: ${money(sale.paidCents)}`,
+      );
+      doc.moveDown().text("Payments");
+      for (const payment of sale.payments)
+        doc.text(
+          `${payment.method} ${payment.status}: ${money(payment.amountCents)}${payment.mpesaReceipt ? ` (${payment.mpesaReceipt})` : ""}`,
+        );
+      doc.end();
+      return;
+    }
+    response
+      .type("html")
+      .send(
+        `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Receipt ${esc(sale.receiptNo ?? "")}</title><style>@page{size:${thermalWidth}mm auto;margin:3mm}body{font:12px monospace;color:#000;width:calc(${thermalWidth}mm - 6mm);margin:auto}header{text-align:center;font-weight:bold;font-size:16px}hr{border:0;border-top:1px dashed #000}.row{display:flex;justify-content:space-between;gap:8px}.copy{text-align:center;font-weight:bold}.total{font-weight:bold;font-size:14px}@media print{button{display:none}}</style></head><body><header>${esc(sale.shop.name)}</header><p class="copy">COPY</p><center>${esc(sale.shop.address ?? "")}<br>${esc(sale.shop.phone ?? "")}<br>${sale.shop.kraPin ? `KRA PIN: ${esc(sale.shop.kraPin)}` : ""}</center><hr>Receipt: ${esc(sale.receiptNo ?? "—")}<br>${esc(time)}<br>Served by: ${esc(sale.seller.name)}<hr>${lines.map((line) => `<div>${esc(line)}</div>`).join("")}<hr><div class="row"><span>Subtotal</span><span>${money(sale.subtotalCents)}</span></div><div class="row"><span>Discount</span><span>${money(sale.discountCents)}</span></div><div class="row total"><span>Total</span><span>${money(sale.totalCents)}</span></div><div class="row"><span>Paid</span><span>${money(sale.paidCents)}</span></div><hr>${sale.payments.map((payment) => `<div>${esc(payment.method)} ${esc(payment.status)} ${money(payment.amountCents)} ${payment.mpesaReceipt ? esc(payment.mpesaReceipt) : ""}</div>`).join("")}<p style="text-align:center">Thank you for shopping with us</p><button onclick="print()">Print</button></body></html>`,
+      );
   },
 );

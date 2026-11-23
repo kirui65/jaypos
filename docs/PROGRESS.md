@@ -4,10 +4,10 @@ Last updated: 2026-11-23
 
 ## Current state
 
-- **Approved scope:** Phase 1, milestones M1–M5 are complete; resume at **M6: Payments**. The existing approval covers the planned milestones; do not restart at M1.
+- **Approved scope:** Phase 1, milestones M1–M7 are complete; resume at **M8: UI and integration**. The existing approval covers the planned milestones; do not restart at M1.
 - **Source of truth:** `/docs/SPEC.md`. `/SPEC.md` and `/docs/SPEC.md` currently contain identical copies. Preserve both unless asked to change them.
 - **Latest implementation commit:** `c1fdbb7` — `feat: add sales and shift flows`.
-- **Working tree:** M1–M5 implementation is committed; the two original spec files remain untracked and were not included in the M1 commit.
+- **Working tree:** M1–M5 implementation is committed. M6–M7 are implemented in the current working tree; the two original spec files remain untracked and were not included in the M1 commit.
 
 ## Completed: M1 — Foundation
 
@@ -105,9 +105,41 @@ Both responded successfully at last check. If the processes are no longer runnin
 - Prisma schema validation — passed.
 - **Not run:** applying the M5 migration; configure `DATABASE_URL` with the Supabase PostgreSQL connection string first.
 
-## Next: M6 — Payments
+## Completed: M6 — Payments
 
-Implement provider interface, mock and Lipwa adapters, STK initiation and callback verification, idempotency, payment status checks/expiry, amount mismatch handling, and unmatched payment queue. Read current Lipwa documentation before provider-specific implementation.
+- Added a provider interface with mock and Lipwa adapters, documented Lipwa request/status fields, bearer authentication, and whole-KES amount conversion. STK initiation records the provider request and remains pending until the authenticated Lipwa status query confirms payment.
+- Added callback notifications verified through Lipwa status queries, status polling and 90-second expiry, manual status checks, amount/phone/receipt mismatch handling, payment and sale audits, and an admin unmatched-payment queue. Pending STK sales deduct stock only after confirmed payment; late stock conflicts are accepted and flagged for review.
+- Added the unmatched-payment migration, environment examples, and provider contract tests.
+- **TODO(lipwa):** configure credentials, channel, and public callback URL, then verify the merchant account and live minimum-value transaction before production.
+
+## M6 checks
+
+- `corepack pnpm test` — passed, 29 tests.
+- `corepack pnpm lint` — passed.
+- `corepack pnpm typecheck` — passed.
+- `corepack pnpm format:check` — passed.
+- Prisma schema validation — passed.
+- **Not run:** applying the M6 migration; configure the Supabase `DATABASE_URL` first.
+
+## Completed: M7 — Refunds and receipts
+
+- Added staff refund requests limited to their sales, server-calculated return amounts and quantities, cumulative paid/sold limits, and admin approval or rejection with audit records.
+- Approval can return items to sellable stock transactionally or record them in a separate damaged-stock balance. Restocks append stock movements. Exchanges can link the refund to a completed replacement sale.
+- Added an admin damaged-stock view and audited receipt reprints in black-and-white thermal HTML (58/80 mm) and PDF with Nairobi time, item/payment details, M-Pesa receipt codes, and a visible COPY mark.
+- Added migrations for exchange links and damaged-return balances.
+
+## M7 checks
+
+- `corepack pnpm test` — passed, 29 tests.
+- `corepack pnpm lint` — passed.
+- `corepack pnpm typecheck` — passed.
+- `corepack pnpm format:check` — passed.
+- Prisma schema validation — passed.
+- **Not run:** applying M6–M7 migrations; configure the Supabase `DATABASE_URL` first.
+
+## Next: M8 — UI and integration
+
+Connect the staff/admin screens to the completed API flows, then verify the Phase 1 acceptance paths end to end.
 
 ## Handoff reminders
 

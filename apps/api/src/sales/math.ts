@@ -1,6 +1,7 @@
 export type PricedLine = { unitPriceCents: number; quantity: number; discountCents: number };
 export type SalePayment =
   | { method: "cash"; amountCents: number }
+  | { method: "mpesa_stk"; amountCents: number; phone: string }
   | { method: "mpesa_manual"; amountCents: number; mpesaReceipt: string }
   | { method: "card"; amountCents: number };
 

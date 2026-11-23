@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { allocateSalePayments, calculateSaleTotals } from "../src/sales/math.js";
-import { planStockDemands, serializeSale } from "../src/sales/routes.js";
+import { planStockDemands } from "../src/sales/inventory.js";
+import { serializeSale } from "../src/sales/routes.js";
 
 describe("sale calculations", () => {
   it("calculates server-owned prices and discounts in integer cents", () => {

@@ -90,6 +90,7 @@ model Shop {
   brands         Brand[]
   products       Product[]
   stockLevels    StockLevel[]
+  damagedStockLevels DamagedStockLevel[]
   stockMovements StockMovement[]
   customers      Customer[]
   sales          Sale[]
@@ -103,6 +104,7 @@ model Shop {
   saleItems      SaleItem[]
   payments       Payment[]
   refunds        Refund[]
+  unmatchedPayments UnmatchedPayment[]
   refundItems    RefundItem[]
   cashMovements  CashMovement[]
   stockReports   StockReport[]
@@ -326,6 +328,7 @@ model ProductVariant {
   parentBulkVariant  ProductVariant? @relation("BulkDecants", fields: [parentBulkVariantId], references: [id])
   decantVariants     ProductVariant[] @relation("BulkDecants")
   stockLevels        StockLevel[]
+  damagedStockLevels DamagedStockLevel[]
   stockMovements     StockMovement[]
   bundleComponents   BundleItem[]    @relation("Bundle")
   bundleParents      BundleItem[]    @relation("BundleComponent")
@@ -361,6 +364,19 @@ model StockLevel {
 
   @@unique([shopId, variantId])
   @@map("stock_levels")
+}
+
+model DamagedStockLevel {
+  id        String         @id @default(uuid()) @db.Uuid
+  shopId    String         @db.Uuid @map("shop_id")
+  variantId String         @db.Uuid @map("variant_id")
+  quantity  Int            @default(0)
+  updatedAt DateTime       @updatedAt @map("updated_at")
+  shop      Shop           @relation(fields: [shopId], references: [id])
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([shopId, variantId])
+  @@map("damaged_stock_levels")
 }
 
 model StockMovement {
@@ -483,6 +499,7 @@ model Sale {
   items          SaleItem[]
   payments       Payment[]
   refunds        Refund[]
+  exchangedRefunds Refund[] @relation("RefundExchangeSale")
 
   @@index([shopId, createdAt])
   @@index([shopId, sellerId, createdAt])
@@ -537,10 +554,28 @@ model Payment {
   @@map("payments")
 }
 
+model UnmatchedPayment {
+  id                String    @id @default(uuid()) @db.Uuid
+  shopId            String    @db.Uuid @map("shop_id")
+  provider          String
+  providerRequestId String    @unique @map("provider_request_id")
+  amountCents       Int       @map("amount_cents")
+  phone             String?
+  mpesaReceipt      String?   @map("mpesa_receipt")
+  rawJson           Json      @map("raw_json")
+  reconciledAt      DateTime? @map("reconciled_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  shop              Shop      @relation(fields: [shopId], references: [id])
+
+  @@index([shopId, reconciledAt, createdAt])
+  @@map("unmatched_payments")
+}
+
 model Refund {
   id          String         @id @default(uuid()) @db.Uuid
   shopId      String         @db.Uuid @map("shop_id")
   saleId      String         @db.Uuid @map("sale_id")
+  exchangeSaleId String?     @db.Uuid @map("exchange_sale_id")
   requestedBy String         @db.Uuid @map("requested_by")
   approvedBy  String?        @db.Uuid @map("approved_by")
   status      RefundStatus   @default(requested)
@@ -550,12 +585,14 @@ model Refund {
   createdAt   DateTime       @default(now()) @map("created_at")
   updatedAt   DateTime       @updatedAt @map("updated_at")
   sale        Sale           @relation(fields: [saleId], references: [id])
+  exchangeSale Sale?         @relation("RefundExchangeSale", fields: [exchangeSaleId], references: [id])
   shop        Shop           @relation(fields: [shopId], references: [id])
   requester   User           @relation("RefundRequester", fields: [requestedBy], references: [id])
   approver    User?          @relation("RefundApprover", fields: [approvedBy], references: [id])
   items       RefundItem[]
 
   @@index([saleId, status])
+  @@index([exchangeSaleId])
   @@map("refunds")
 }
 
