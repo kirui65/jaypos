@@ -1,13 +1,13 @@
 # Project Progress
 
-Last updated: 2026-11-22
+Last updated: 2026-11-23
 
 ## Current state
 
-- **Approved scope:** Phase 1, milestones M1–M8. M1 and M2 are complete; resume at **M3: Catalog**. The existing approval covers the planned milestones; do not restart at M1.
+- **Approved scope:** Phase 1, milestones M1–M8. M1–M3 are complete; resume at **M4: Stock ledger**. The existing approval covers the planned milestones; do not restart at M1.
 - **Source of truth:** `/docs/SPEC.md`. `/SPEC.md` and `/docs/SPEC.md` currently contain identical copies. Preserve both unless asked to change them.
-- **Latest implementation commit:** `HEAD` — `feat: add authentication and staff management`.
-- **Working tree:** implementation is committed. The two original spec files are untracked in this checkout; they were not included in the M1 commit.
+- **Latest implementation commit:** `3278a69` — `feat: add authentication and staff management`.
+- **Working tree:** M3 catalog changes and prior progress-file corrections are uncommitted; the two original spec files remain untracked and were not included in the M1 commit.
 
 ## Completed: M1 — Foundation
 
@@ -37,20 +37,6 @@ The M1 development servers were started with `corepack pnpm dev`:
 
 Both responded successfully at last check. If the processes are no longer running in a new session, restart with `corepack pnpm dev`. The web page is only the foundation placeholder; the POS interface is planned for M8.
 
-## Next: M2 — Authentication and staff management
-
-Implement login/logout, password-change enforcement, PIN unlock, rate limiting/lockout, server-side permission middleware, admin-only staff management, archival/deletion rules, last-admin protections, audit entries, and permission tests. Follow the detailed acceptance criteria in `/docs/PHASE1_PLAN.md` and record decisions in `/docs/DECISIONS.md`.
-
-At the end of M2, run tests, lint, typecheck, and formatting check; fix failures; create a focused commit; then update this progress file with the new state and next milestone.
-
-## Handoff reminders
-
-- Read `/docs/SPEC.md`, then this file, before continuing implementation.
-- Use the approved stack and milestone scope from the user prompt; do not start Phase 2–4 work.
-- Use `corepack pnpm` commands when a `pnpm` shim is not available.
-- No `.env` or production secrets have been created or committed. The seed generates a one-time admin password if `ADMIN_SEED_PASSWORD` is empty and prints it when creating the initial account.
-- Lipwa provider field names and callback verification are still a `TODO(lipwa)`; consult current documentation before M6.
-
 ## Completed: M2 — Authentication and staff management
 
 - Added opaque 256-bit server sessions, stored as SHA-256 token hashes, in HttpOnly SameSite cookies with an 8-hour expiry and revocation.
@@ -68,6 +54,31 @@ At the end of M2, run tests, lint, typecheck, and formatting check; fix failures
 - Prisma schema validation — passed.
 - **Not run:** applying the M2 migration. Docker is unavailable and nothing is listening on `localhost:5432`; retry when PostgreSQL is available.
 
-## Next: M3 — Catalog
+## Completed: M3 — Catalog
 
-Implement configurable departments and product types, attribute templates, products and variants, size/colour grids, perfume decant links, bundles, tester stock representation, and staff-safe serialization. Follow the acceptance criteria in `/docs/PHASE1_PLAN.md`; keep M4 stock mutations out of scope. At milestone end, run the required checks, create a focused commit, and update this file.
+- Added authenticated staff catalog reads and admin-only catalog create/edit endpoints for departments, product types and attribute templates, brands, products, variants, and bundles.
+- Product creation accepts multiple variants for size/colour grids, validates configured attribute requirements and shop ownership, and supports perfume bulk/decant links.
+- Added dedicated tester variant representation. Tester stock is hidden from staff and returned separately to admins; tester variants cannot be marked sellable.
+- Catalog writes are audited. Staff serialization excludes cost fields; automated coverage checks staff and admin output.
+- Added variant image and tester fields plus the `catalog.manage` permission in a database migration.
+
+## M3 checks
+
+- `corepack pnpm test` — passed, 15 tests (API tests required permission to bind a local port).
+- `corepack pnpm lint` — passed.
+- `corepack pnpm typecheck` — passed.
+- `corepack pnpm format:check` — passed.
+- Prisma schema validation — passed.
+- **Not run:** applying the M3 migration; Docker/PostgreSQL are unavailable in this environment.
+
+## Next: M4 — Stock ledger
+
+Implement admin-only stock receipts, adjustments, counts and write-offs, transactional ledger updates, and staff stock reports without stock changes. Keep sale-driven stock mutations for M5 and approved refund mutations for M7.
+
+## Handoff reminders
+
+- Read `/docs/SPEC.md`, then this file, before continuing implementation.
+- Use the approved stack and milestone scope from the user prompt; do not start Phase 2–4 work.
+- Use `corepack pnpm` commands when a `pnpm` shim is not available.
+- No `.env` or production secrets have been created or committed. The seed generates a one-time admin password if `ADMIN_SEED_PASSWORD` is empty and prints it when creating the initial account.
+- Lipwa provider field names and callback verification are still a `TODO(lipwa)`; consult current documentation before M6.

@@ -289,6 +289,7 @@ model ProductVariant {
   sku                String          @unique
   barcode            String?         @unique
   attributesJson     Json            @default("{}") @map("attributes_json")
+  imageUrl           String?         @map("image_url")
   priceCents         Int             @map("price_cents")
   costCents          Int             @map("cost_cents")
   reorderLevel       Int             @default(0) @map("reorder_level")
@@ -299,6 +300,7 @@ model ProductVariant {
   parentBulkVariantId String?         @db.Uuid @map("parent_bulk_variant_id")
   mlPerUnit          Int?            @map("ml_per_unit")
   isTesterAllowed    Boolean         @default(false) @map("is_tester_allowed")
+  isTester           Boolean         @default(false) @map("is_tester")
   active             Boolean         @default(true)
   createdAt          DateTime        @default(now()) @map("created_at")
   updatedAt          DateTime        @updatedAt @map("updated_at")

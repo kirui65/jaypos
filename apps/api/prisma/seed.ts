@@ -12,6 +12,7 @@ const permissionDescriptions: Record<string, string> = {
   "sales.void": "Void completed sales",
   "stock.read": "View stock levels",
   "stock.write": "Receive and adjust stock",
+  "catalog.manage": "Create and edit catalog data",
   "customers.write": "Create and edit customers",
   "customers.delete": "Delete customers",
   "refunds.request": "Request sale refunds",

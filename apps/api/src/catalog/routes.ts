@@ -1,0 +1,609 @@
+import type { Prisma } from "@prisma/client";
+import { Router } from "express";
+import { z } from "zod";
+import { prisma } from "../db.js";
+import { requirePermission, type AuthenticatedRequest } from "../auth/middleware.js";
+
+const objectJson = z.record(z.string(), z.unknown()).default({});
+const departmentInput = z
+  .object({
+    name: z.string().trim().min(1).max(80),
+    code: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^[a-z0-9_-]+$/i),
+  })
+  .strict();
+const typeInput = departmentInput
+  .extend({
+    parentId: z.string().uuid().nullable().optional(),
+    attributeTemplate: objectJson,
+    taxCategory: z.string().trim().max(80).nullable().optional(),
+    returnWindowDays: z.number().int().min(0).max(3650).nullable().optional(),
+  })
+  .strict();
+const departmentPatchInput = z
+  .object({
+    name: z.string().trim().min(1).max(80).optional(),
+    code: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^[a-z0-9_-]+$/i)
+      .optional(),
+    active: z.boolean().optional(),
+  })
+  .strict();
+const typePatchInput = z
+  .object({
+    name: z.string().trim().min(1).max(80).optional(),
+    code: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^[a-z0-9_-]+$/i)
+      .optional(),
+    parentId: z.string().uuid().nullable().optional(),
+    attributeTemplate: objectJson.optional(),
+    taxCategory: z.string().trim().max(80).nullable().optional(),
+    returnWindowDays: z.number().int().min(0).max(3650).nullable().optional(),
+    active: z.boolean().optional(),
+  })
+  .strict();
+const variantInput = z
+  .object({
+    sku: z.string().trim().min(1).max(80),
+    barcode: z.string().trim().max(100).nullable().optional(),
+    attributes: objectJson,
+    imageUrl: z.string().url().nullable().optional(),
+    priceCents: z.number().int().min(0),
+    costCents: z.number().int().min(0),
+    reorderLevel: z.number().int().min(0).default(0),
+    batchNo: z.string().trim().max(100).nullable().optional(),
+    expiryDate: z.string().date().nullable().optional(),
+    isBulk: z.boolean().default(false),
+    bulkVolumeMl: z.number().int().positive().nullable().optional(),
+    parentBulkVariantId: z.string().uuid().nullable().optional(),
+    mlPerUnit: z.number().int().positive().nullable().optional(),
+    isTesterAllowed: z.boolean().default(false),
+    isTester: z.boolean().default(false),
+  })
+  .strict();
+const productInput = z
+  .object({
+    departmentId: z.string().uuid(),
+    productTypeId: z.string().uuid(),
+    brandId: z.string().uuid().nullable().optional(),
+    name: z.string().trim().min(1).max(160),
+    description: z.string().trim().max(4000).nullable().optional(),
+    attributes: objectJson,
+    imageUrl: z.string().url().nullable().optional(),
+    variants: z.array(variantInput).min(1).max(300),
+  })
+  .strict();
+const productPatchInput = z
+  .object({
+    departmentId: z.string().uuid().optional(),
+    productTypeId: z.string().uuid().optional(),
+    brandId: z.string().uuid().nullable().optional(),
+    name: z.string().trim().min(1).max(160).optional(),
+    description: z.string().trim().max(4000).nullable().optional(),
+    attributes: objectJson.optional(),
+    imageUrl: z.string().url().nullable().optional(),
+    active: z.boolean().optional(),
+  })
+  .strict();
+const bundleInput = z
+  .object({
+    bundleVariantId: z.string().uuid(),
+    components: z
+      .array(
+        z.object({ variantId: z.string().uuid(), quantity: z.number().int().positive() }).strict(),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict();
+
+function audit(
+  request: AuthenticatedRequest,
+  action: string,
+  entity: string,
+  entityId: string,
+  after: unknown,
+) {
+  return prisma.auditLog.create({
+    data: {
+      shopId: request.authUser!.shopId,
+      userId: request.authUser!.id,
+      action,
+      entity,
+      entityId,
+      afterJson: after as Prisma.InputJsonValue,
+      ip: request.ip ?? null,
+    },
+  });
+}
+function defined<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as T;
+}
+type CatalogVariantRecord = {
+  id: string;
+  sku: string;
+  barcode: string | null;
+  attributesJson: unknown;
+  imageUrl: string | null;
+  priceCents: number;
+  costCents: number;
+  reorderLevel: number;
+  batchNo: string | null;
+  expiryDate: Date | null;
+  isBulk: boolean;
+  bulkVolumeMl: number | null;
+  parentBulkVariantId: string | null;
+  mlPerUnit: number | null;
+  isTester: boolean;
+  stockLevels: { quantity: number; mlRemaining: number | null }[];
+};
+type CatalogProductRecord = {
+  id: string;
+  name: string;
+  description: string | null;
+  attributesJson: unknown;
+  imageUrl: string | null;
+  active: boolean;
+  department: unknown;
+  productType: unknown;
+  brand: unknown;
+  variants: CatalogVariantRecord[];
+};
+
+export function publicProduct(product: CatalogProductRecord, admin: boolean) {
+  const serializeVariant = (variant: CatalogVariantRecord) => ({
+    id: variant.id,
+    sku: variant.sku,
+    barcode: variant.barcode,
+    attributes: variant.attributesJson,
+    imageUrl: variant.imageUrl,
+    priceCents: variant.priceCents,
+    ...(admin ? { costCents: variant.costCents } : {}),
+    reorderLevel: variant.reorderLevel,
+    batchNo: variant.batchNo,
+    expiryDate: variant.expiryDate,
+    isBulk: variant.isBulk,
+    bulkVolumeMl: variant.bulkVolumeMl,
+    parentBulkVariantId: variant.parentBulkVariantId,
+    mlPerUnit: variant.mlPerUnit,
+    stock: variant.stockLevels[0]?.quantity ?? 0,
+    mlRemaining: variant.stockLevels[0]?.mlRemaining ?? null,
+  });
+  return {
+    id: product.id,
+    name: product.name,
+    description: product.description,
+    attributes: product.attributesJson,
+    imageUrl: product.imageUrl,
+    active: product.active,
+    department: product.department,
+    productType: product.productType,
+    brand: product.brand,
+    variants: product.variants.filter((variant) => !variant.isTester).map(serializeVariant),
+    ...(admin
+      ? {
+          testerVariants: product.variants
+            .filter((variant) => variant.isTester)
+            .map(serializeVariant),
+        }
+      : {}),
+  };
+}
+
+function validateAttributes(
+  templateValue: unknown,
+  attributes: Record<string, unknown>,
+): string | null {
+  if (!templateValue || typeof templateValue !== "object" || Array.isArray(templateValue))
+    return null;
+  const template = templateValue as { fields?: unknown };
+  if (!Array.isArray(template.fields)) return null;
+  for (const entry of template.fields) {
+    if (!entry || typeof entry !== "object") continue;
+    const field = entry as { key?: unknown; required?: unknown; values?: unknown };
+    if (typeof field.key !== "string") continue;
+    const value = attributes[field.key];
+    if (field.required === true && (value === undefined || value === null || value === ""))
+      return `${field.key} is required`;
+    if (value !== undefined && Array.isArray(field.values) && !field.values.includes(value))
+      return `${field.key} must be one of the configured values`;
+  }
+  return null;
+}
+
+export const catalogRouter = Router();
+catalogRouter.get(
+  "/",
+  requirePermission("stock.read"),
+  async (request: AuthenticatedRequest, response) => {
+    const shopId = request.authUser!.shopId;
+    const [departments, productTypes, brands, products, bundles] = await Promise.all([
+      prisma.department.findMany({ where: { shopId }, orderBy: { name: "asc" } }),
+      prisma.productType.findMany({ where: { shopId }, orderBy: { name: "asc" } }),
+      prisma.brand.findMany({ where: { shopId }, orderBy: { name: "asc" } }),
+      prisma.product.findMany({
+        where: { shopId },
+        include: {
+          department: true,
+          productType: true,
+          brand: true,
+          variants: { include: { stockLevels: { where: { shopId } } } },
+        },
+        orderBy: { name: "asc" },
+      }),
+      prisma.bundleItem.findMany({
+        where: { shopId },
+        select: { bundleVariantId: true, componentVariantId: true, quantity: true },
+      }),
+    ]);
+    const isAdmin = request.authUser!.role.name === "admin";
+    return response.json({
+      departments,
+      productTypes,
+      brands,
+      products: products.map((product) => publicProduct(product, isAdmin)),
+      bundles,
+    });
+  },
+);
+
+catalogRouter.post(
+  "/departments",
+  requirePermission("catalog.manage"),
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = departmentInput.safeParse(request.body);
+    if (!parsed.success)
+      return response
+        .status(400)
+        .json({ error: "Invalid department", details: parsed.error.flatten() });
+    const row = await prisma.department.create({
+      data: { ...parsed.data, shopId: request.authUser!.shopId },
+    });
+    await audit(request, "catalog.department_created", "department", row.id, row);
+    return response.status(201).json(row);
+  },
+);
+catalogRouter.patch(
+  "/departments/:id",
+  requirePermission("catalog.manage"),
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = departmentPatchInput.safeParse(request.body);
+    if (!parsed.success || !Object.keys(request.body ?? {}).length)
+      return response.status(400).json({ error: "Invalid department update" });
+    const where = { id: request.params.id!, shopId: request.authUser!.shopId };
+    const before = await prisma.department.findFirst({ where });
+    if (!before) return response.status(404).json({ error: "Department not found" });
+    const updated = await prisma.department.update({
+      where: { id: before.id },
+      data: defined(parsed.data) as Prisma.DepartmentUncheckedUpdateInput,
+    });
+    await audit(request, "catalog.department_updated", "department", updated.id, {
+      before,
+      after: updated,
+    });
+    return response.json(updated);
+  },
+);
+catalogRouter.post(
+  "/product-types",
+  requirePermission("catalog.manage"),
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = typeInput.safeParse(request.body);
+    if (!parsed.success)
+      return response
+        .status(400)
+        .json({ error: "Invalid product type", details: parsed.error.flatten() });
+    const data = parsed.data;
+    const row = await prisma.productType.create({
+      data: {
+        shopId: request.authUser!.shopId,
+        name: data.name,
+        code: data.code,
+        parentId: data.parentId ?? null,
+        attributeTemplateJson: data.attributeTemplate as Prisma.InputJsonValue,
+        taxCategory: data.taxCategory ?? null,
+        returnWindowDays: data.returnWindowDays ?? null,
+      },
+    });
+    await audit(request, "catalog.product_type_created", "product_type", row.id, row);
+    return response.status(201).json(row);
+  },
+);
+catalogRouter.patch(
+  "/product-types/:id",
+  requirePermission("catalog.manage"),
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = typePatchInput.safeParse(request.body);
+    if (!parsed.success || !Object.keys(request.body ?? {}).length)
+      return response.status(400).json({ error: "Invalid product type update" });
+    const shopId = request.authUser!.shopId;
+    const where = { id: request.params.id!, shopId };
+    const before = await prisma.productType.findFirst({ where });
+    if (!before) return response.status(404).json({ error: "Product type not found" });
+    if (parsed.data.parentId) {
+      const parent = await prisma.productType.findFirst({
+        where: { id: parsed.data.parentId, shopId },
+      });
+      if (!parent)
+        return response.status(400).json({ error: "Parent type must belong to this shop" });
+    }
+    const { attributeTemplate, ...fields } = parsed.data;
+    const updated = await prisma.productType.update({
+      where: { id: before.id },
+      data: defined({
+        ...fields,
+        ...(attributeTemplate
+          ? { attributeTemplateJson: attributeTemplate as Prisma.InputJsonValue }
+          : {}),
+      }) as Prisma.ProductTypeUncheckedUpdateInput,
+    });
+    await audit(request, "catalog.product_type_updated", "product_type", updated.id, {
+      before,
+      after: updated,
+    });
+    return response.json(updated);
+  },
+);
+catalogRouter.post(
+  "/brands",
+  requirePermission("catalog.manage"),
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = z
+      .object({ name: z.string().trim().min(1).max(120) })
+      .strict()
+      .safeParse(request.body);
+    if (!parsed.success) return response.status(400).json({ error: "Invalid brand" });
+    const row = await prisma.brand.create({
+      data: { ...parsed.data, shopId: request.authUser!.shopId },
+    });
+    await audit(request, "catalog.brand_created", "brand", row.id, row);
+    return response.status(201).json(row);
+  },
+);
+catalogRouter.post(
+  "/products",
+  requirePermission("catalog.manage"),
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = productInput.safeParse(request.body);
+    if (!parsed.success)
+      return response
+        .status(400)
+        .json({ error: "Invalid product", details: parsed.error.flatten() });
+    const input = parsed.data;
+    const shopId = request.authUser!.shopId;
+    const [department, productType, brand] = await Promise.all([
+      prisma.department.findFirst({ where: { id: input.departmentId, shopId } }),
+      prisma.productType.findFirst({ where: { id: input.productTypeId, shopId } }),
+      input.brandId
+        ? prisma.brand.findFirst({ where: { id: input.brandId, shopId } })
+        : Promise.resolve(true),
+    ]);
+    if (!department || !productType || !brand)
+      return response
+        .status(400)
+        .json({ error: "Department, product type, and brand must belong to this shop" });
+    for (const item of input.variants) {
+      const attributeError = validateAttributes(productType.attributeTemplateJson, item.attributes);
+      if (attributeError)
+        return response.status(400).json({ error: `Variant ${item.sku}: ${attributeError}` });
+      if (
+        (item.isBulk || item.parentBulkVariantId || item.mlPerUnit) &&
+        productType.code.toLowerCase() !== "perfumes"
+      )
+        return response
+          .status(400)
+          .json({ error: "Bulk and decant variants are only supported for perfumes" });
+    }
+    if (input.variants.some((variant) => variant.isTester && variant.isTesterAllowed))
+      return response.status(400).json({ error: "Tester variants cannot be sellable" });
+    const bulkIds = input.variants.flatMap((item) =>
+      item.parentBulkVariantId ? [item.parentBulkVariantId] : [],
+    );
+    if (bulkIds.length) {
+      const bulkVariants = await prisma.productVariant.findMany({
+        where: { shopId, id: { in: bulkIds } },
+        include: { product: { include: { productType: true } } },
+      });
+      if (
+        bulkVariants.length !== new Set(bulkIds).size ||
+        bulkVariants.some(
+          (variant) =>
+            !variant.isBulk || variant.product.productType.code.toLowerCase() !== "perfumes",
+        )
+      )
+        return response
+          .status(400)
+          .json({ error: "Decants must link to an existing perfume bulk variant in this shop" });
+    }
+    const created = await prisma.$transaction(async (tx) => {
+      const product = await tx.product.create({
+        data: {
+          shopId,
+          departmentId: input.departmentId,
+          productTypeId: input.productTypeId,
+          brandId: input.brandId ?? null,
+          name: input.name,
+          description: input.description ?? null,
+          attributesJson: input.attributes as Prisma.InputJsonValue,
+          imageUrl: input.imageUrl ?? null,
+        },
+      });
+      for (const item of input.variants)
+        await tx.productVariant.create({
+          data: {
+            shopId,
+            productId: product.id,
+            sku: item.sku,
+            barcode: item.barcode ?? null,
+            attributesJson: item.attributes as Prisma.InputJsonValue,
+            imageUrl: item.imageUrl ?? null,
+            priceCents: item.priceCents,
+            costCents: item.costCents,
+            reorderLevel: item.reorderLevel,
+            batchNo: item.batchNo ?? null,
+            expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
+            isBulk: item.isBulk,
+            bulkVolumeMl: item.bulkVolumeMl ?? null,
+            parentBulkVariantId: item.parentBulkVariantId ?? null,
+            mlPerUnit: item.mlPerUnit ?? null,
+            isTesterAllowed: item.isTesterAllowed,
+            isTester: item.isTester,
+          },
+        });
+      await tx.auditLog.create({
+        data: {
+          shopId,
+          userId: request.authUser!.id,
+          action: "catalog.product_created",
+          entity: "product",
+          entityId: product.id,
+          afterJson: { name: product.name, variantCount: input.variants.length },
+          ip: request.ip ?? null,
+        },
+      });
+      return product;
+    });
+    return response.status(201).json({ id: created.id, name: created.name });
+  },
+);
+catalogRouter.patch(
+  "/products/:id",
+  requirePermission("catalog.manage"),
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = productPatchInput.safeParse(request.body);
+    if (!parsed.success)
+      return response
+        .status(400)
+        .json({ error: "Invalid product update", details: parsed.error.flatten() });
+    const shopId = request.authUser!.shopId;
+    const before = await prisma.product.findFirst({ where: { id: request.params.id!, shopId } });
+    if (!before) return response.status(404).json({ error: "Product not found" });
+    const [department, productType, brand] = await Promise.all([
+      parsed.data.departmentId
+        ? prisma.department.findFirst({ where: { id: parsed.data.departmentId, shopId } })
+        : Promise.resolve(true),
+      parsed.data.productTypeId
+        ? prisma.productType.findFirst({ where: { id: parsed.data.productTypeId, shopId } })
+        : Promise.resolve(true),
+      parsed.data.brandId
+        ? prisma.brand.findFirst({ where: { id: parsed.data.brandId, shopId } })
+        : Promise.resolve(true),
+    ]);
+    if (!department || !productType || !brand)
+      return response
+        .status(400)
+        .json({ error: "Department, product type, and brand must belong to this shop" });
+    const { attributes, ...fields } = parsed.data;
+    const data = defined({
+      ...fields,
+      ...(attributes ? { attributesJson: attributes as Prisma.InputJsonValue } : {}),
+    }) as Prisma.ProductUncheckedUpdateInput;
+    const updated = await prisma.product.update({ where: { id: before.id }, data });
+    await audit(request, "catalog.product_updated", "product", updated.id, {
+      before,
+      after: updated,
+    });
+    return response.json({ id: updated.id, name: updated.name, active: updated.active });
+  },
+);
+catalogRouter.patch(
+  "/variants/:id",
+  requirePermission("catalog.manage"),
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = variantInput.partial().strict().safeParse(request.body);
+    if (!parsed.success || !Object.keys(request.body ?? {}).length)
+      return response.status(400).json({
+        error: "Invalid variant update",
+        details: parsed.success ? undefined : parsed.error.flatten(),
+      });
+    const shopId = request.authUser!.shopId;
+    const before = await prisma.productVariant.findFirst({
+      where: { id: request.params.id!, shopId },
+    });
+    if (!before) return response.status(404).json({ error: "Variant not found" });
+    const { attributes, expiryDate, ...fields } = parsed.data;
+    if (parsed.data.isTester === true && parsed.data.isTesterAllowed === true)
+      return response.status(400).json({ error: "Tester variants cannot be sellable" });
+    const updateData = defined({
+      ...fields,
+      ...(attributes ? { attributesJson: attributes as Prisma.InputJsonValue } : {}),
+      ...(expiryDate !== undefined ? { expiryDate: expiryDate ? new Date(expiryDate) : null } : {}),
+    }) as Prisma.ProductVariantUncheckedUpdateInput;
+    const updated = await prisma.productVariant.update({
+      where: { id: before.id },
+      data: updateData,
+    });
+    await audit(request, "catalog.variant_updated", "product_variant", updated.id, {
+      before,
+      after: updated,
+    });
+    return response.json({ id: updated.id, sku: updated.sku });
+  },
+);
+catalogRouter.post(
+  "/bundles",
+  requirePermission("catalog.manage"),
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = bundleInput.safeParse(request.body);
+    if (!parsed.success)
+      return response
+        .status(400)
+        .json({ error: "Invalid bundle", details: parsed.error.flatten() });
+    const shopId = request.authUser!.shopId;
+    const ids = [
+      parsed.data.bundleVariantId,
+      ...parsed.data.components.map((item) => item.variantId),
+    ];
+    if (new Set(ids).size !== ids.length)
+      return response.status(400).json({ error: "Bundle and component variants must be distinct" });
+    const variants = await prisma.productVariant.findMany({
+      where: { shopId, id: { in: ids } },
+      include: { product: { include: { productType: true } } },
+    });
+    if (variants.length !== ids.length)
+      return response.status(400).json({ error: "All variants must belong to this shop" });
+    const bundle = variants.find(({ id }) => id === parsed.data.bundleVariantId)!;
+    if (
+      bundle.product.productType.code !== "gift-sets" &&
+      bundle.product.productType.code !== "gift_sets"
+    )
+      return response
+        .status(400)
+        .json({ error: "Bundle product must use the gift sets product type" });
+    await prisma.$transaction(async (tx) => {
+      await tx.bundleItem.deleteMany({ where: { shopId, bundleVariantId: bundle.id } });
+      await tx.bundleItem.createMany({
+        data: parsed.data.components.map((item) => ({
+          shopId,
+          bundleVariantId: bundle.id,
+          componentVariantId: item.variantId,
+          quantity: item.quantity,
+        })),
+      });
+      await tx.auditLog.create({
+        data: {
+          shopId,
+          userId: request.authUser!.id,
+          action: "catalog.bundle_updated",
+          entity: "product_variant",
+          entityId: bundle.id,
+          afterJson: parsed.data as Prisma.InputJsonValue,
+          ip: request.ip ?? null,
+        },
+      });
+    });
+    return response.status(204).end();
+  },
+);
