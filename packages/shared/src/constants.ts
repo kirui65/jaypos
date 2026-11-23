@@ -10,6 +10,7 @@ export const DEFAULT_PERMISSION_KEYS = [
   "sales.void",
   "stock.read",
   "stock.write",
+  "stock.report",
   "catalog.manage",
   "customers.write",
   "customers.delete",
@@ -24,6 +25,7 @@ export const DEFAULT_STAFF_PERMISSION_KEYS = [
   "sales.create",
   "sales.read.own",
   "stock.read",
+  "stock.report",
   "customers.write",
   "refunds.request",
 ] as const;

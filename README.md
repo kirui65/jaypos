@@ -6,12 +6,12 @@ Phase 1 core POS workspace for the Eminent Jay retail shop. Read [`docs/SPEC.md`
 
 - Node.js 20 or newer
 - Corepack (to provide the pinned pnpm version)
-- Docker Compose
+- Supabase PostgreSQL for the shared/deployed database; Docker Compose PostgreSQL for local development
 
 ## Local setup
 
 1. Copy `.env.example` to `.env` and set a development admin password if desired.
-2. Start PostgreSQL with `docker compose up -d postgres`.
+2. For local development, start PostgreSQL with `docker compose up -d postgres`. For a Supabase project, set its server-side PostgreSQL connection string as `DATABASE_URL` instead.
 3. Install dependencies with `corepack pnpm install`.
 4. Generate Prisma Client and apply migrations with `corepack pnpm db:generate` and `corepack pnpm db:migrate`.
 5. Seed sample data with `corepack pnpm db:seed`. If no `ADMIN_SEED_PASSWORD` is set, the seed command prints a generated one-time password.

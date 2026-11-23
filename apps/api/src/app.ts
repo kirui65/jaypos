@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authRouter } from "./auth/routes.js";
 import { requireAuth } from "./auth/middleware.js";
 import { catalogRouter } from "./catalog/routes.js";
+import { stockRouter } from "./stock/routes.js";
 
 const healthResponseSchema = z.object({
   status: z.literal("ok"),
@@ -50,5 +51,6 @@ export function createApp() {
   app.use("/api/auth", authRouter);
   app.use("/api", requireAuth);
   app.use("/api/catalog", catalogRouter);
+  app.use("/api/stock", stockRouter);
   return app;
 }

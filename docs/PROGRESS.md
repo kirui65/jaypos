@@ -4,10 +4,10 @@ Last updated: 2026-11-23
 
 ## Current state
 
-- **Approved scope:** Phase 1, milestones M1–M8. M1–M3 are complete; resume at **M4: Stock ledger**. The existing approval covers the planned milestones; do not restart at M1.
+- **Approved scope:** Phase 1, milestones M1–M8. M1–M4 are complete; resume at **M5: Sales and shifts**. The existing approval covers the planned milestones; do not restart at M1.
 - **Source of truth:** `/docs/SPEC.md`. `/SPEC.md` and `/docs/SPEC.md` currently contain identical copies. Preserve both unless asked to change them.
-- **Latest implementation commit:** `3278a69` — `feat: add authentication and staff management`.
-- **Working tree:** M3 catalog changes and prior progress-file corrections are uncommitted; the two original spec files remain untracked and were not included in the M1 commit.
+- **Latest implementation commit:** `b4c45ee` — `feat: add catalog management`.
+- **Working tree:** Supabase database decision documentation is being updated; the two original spec files remain untracked and were not included in the M1 commit.
 
 ## Completed: M1 — Foundation
 
@@ -69,11 +69,27 @@ Both responded successfully at last check. If the processes are no longer runnin
 - `corepack pnpm typecheck` — passed.
 - `corepack pnpm format:check` — passed.
 - Prisma schema validation — passed.
-- **Not run:** applying the M3 migration; Docker/PostgreSQL are unavailable in this environment.
+- **Not run:** applying the M3 migration; configure `DATABASE_URL` with the Supabase PostgreSQL connection string before applying migrations.
 
-## Next: M4 — Stock ledger
+## Completed: M4 — Stock ledger
 
-Implement admin-only stock receipts, adjustments, counts and write-offs, transactional ledger updates, and staff stock reports without stock changes. Keep sale-driven stock mutations for M5 and approved refund mutations for M7.
+- Added staff stock and movement reads with cost price omitted from staff responses.
+- Added admin-only batch receipts, adjustments, damage/tester write-offs, opening bulk bottle changes, and stock counts. Each operation updates stock level, appends a movement, and writes an audit record in a serializable database transaction.
+- Purchase receipts recalculate weighted average cost; stock and remaining bulk millilitres cannot drop below zero. Sales, refunds, and decant movement types are not available through the manual stock endpoint.
+- Added staff damage/tester/count reports and an admin review queue. Submitting/reviewing a report does not change stock; the admin must post a separate stock movement.
+- Added the stock report model, permission, and migration.
+
+## M4 checks
+
+- `corepack pnpm test` — passed, 19 tests.
+- `corepack pnpm lint` — passed after fixing the type-only import.
+- `corepack pnpm typecheck` — passed.
+- Prisma schema validation — passed.
+- **Not run:** applying the M4 migration; configure `DATABASE_URL` with the Supabase PostgreSQL connection string first.
+
+## Next: M5 — Sales and shifts
+
+Implement shift open/close and cash reconciliation, held carts, idempotent sales, server-calculated totals and discounts, split/cash payments, receipt numbering, and transactional stock deductions for regular, decant, and bundle sales. Keep STK initiation in M6.
 
 ## Handoff reminders
 

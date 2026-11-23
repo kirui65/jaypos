@@ -62,6 +62,18 @@ enum CashMovementType {
   out
 }
 
+enum StockReportType {
+  damage
+  tester
+  count
+}
+
+enum StockReportStatus {
+  pending
+  reviewed
+  dismissed
+}
+
 model Shop {
   id             String             @id @default(uuid()) @db.Uuid
   name           String
@@ -93,6 +105,7 @@ model Shop {
   refunds        Refund[]
   refundItems    RefundItem[]
   cashMovements  CashMovement[]
+  stockReports   StockReport[]
 
   @@map("shops")
 }
@@ -157,6 +170,7 @@ model User {
   refundsRequested       Refund[]     @relation("RefundRequester")
   refundsApproved        Refund[]     @relation("RefundApprover")
   shifts                 Shift[]
+  stockReports           StockReport[]
 
   @@unique([shopId, username])
   @@index([shopId, active])
@@ -313,6 +327,7 @@ model ProductVariant {
   bundleComponents   BundleItem[]    @relation("Bundle")
   bundleParents      BundleItem[]    @relation("BundleComponent")
   saleItems          SaleItem[]
+  stockReports       StockReport[]
 
   @@index([productId, active])
   @@map("product_variants")
@@ -364,6 +379,27 @@ model StockMovement {
   @@index([shopId, variantId, createdAt])
   @@index([referenceType, referenceId])
   @@map("stock_movements")
+}
+
+model StockReport {
+  id          String            @id @default(uuid()) @db.Uuid
+  shopId      String            @db.Uuid @map("shop_id")
+  variantId   String            @db.Uuid @map("variant_id")
+  reportedBy  String            @db.Uuid @map("reported_by")
+  type        StockReportType
+  quantity    Int?
+  reason      String
+  photoUrl    String?           @map("photo_url")
+  status      StockReportStatus @default(pending)
+  reviewedBy  String?           @db.Uuid @map("reviewed_by")
+  reviewedAt  DateTime?         @map("reviewed_at")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  shop        Shop              @relation(fields: [shopId], references: [id])
+  variant     ProductVariant    @relation(fields: [variantId], references: [id])
+  reporter    User              @relation(fields: [reportedBy], references: [id])
+
+  @@index([shopId, status, createdAt])
+  @@map("stock_reports")
 }
 
 model Customer {
