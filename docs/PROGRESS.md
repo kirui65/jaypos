@@ -6,8 +6,8 @@ Last updated: 2026-11-23
 
 - **Approved scope:** Phase 1, milestones M1–M5 are complete; resume at **M6: Payments**. The existing approval covers the planned milestones; do not restart at M1.
 - **Source of truth:** `/docs/SPEC.md`. `/SPEC.md` and `/docs/SPEC.md` currently contain identical copies. Preserve both unless asked to change them.
-- **Latest implementation commit:** `6ed1a40` — `feat: add stock ledger operations` (M5 is currently uncommitted).
-- **Working tree:** M5 sales and shifts implementation is ready for commit; the two original spec files remain untracked and were not included in the M1 commit.
+- **Latest implementation commit:** `c1fdbb7` — `feat: add sales and shift flows`.
+- **Working tree:** M1–M5 implementation is committed; the two original spec files remain untracked and were not included in the M1 commit.
 
 ## Completed: M1 — Foundation
 
