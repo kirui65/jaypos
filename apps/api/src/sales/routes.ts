@@ -666,6 +666,10 @@ salesRouter.get(
       doc.end();
       return;
     }
+    response.setHeader(
+      "Content-Security-Policy",
+      "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'",
+    );
     response
       .type("html")
       .send(

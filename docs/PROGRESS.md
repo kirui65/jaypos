@@ -4,10 +4,10 @@ Last updated: 2026-11-23
 
 ## Current state
 
-- **Approved scope:** Phase 1, milestones M1–M7 are complete; resume at **M8: UI and integration**. The existing approval covers the planned milestones; do not restart at M1.
+- **Approved scope:** Phase 1, milestones M1–M8 are implemented. The existing approval covers the planned milestones; do not restart at M1.
 - **Source of truth:** `/docs/SPEC.md`. `/SPEC.md` and `/docs/SPEC.md` currently contain identical copies. Preserve both unless asked to change them.
-- **Latest implementation commit:** `c1fdbb7` — `feat: add sales and shift flows`.
-- **Working tree:** M1–M5 implementation is committed. M6–M7 are implemented in the current working tree; the two original spec files remain untracked and were not included in the M1 commit.
+- **Latest implementation commit:** `0d8d747` — `feat: build responsive POS and admin frontend`.
+- **Working tree:** M1–M8 implementation is committed; the two original spec files remain untracked and were not included in the M1 commit.
 
 ## Completed: M1 — Foundation
 
@@ -30,12 +30,13 @@ Last updated: 2026-11-23
 
 ## Local preview
 
-The M1 development servers were started with `corepack pnpm dev`:
+Start with `corepack pnpm dev`:
 
 - Web: `http://localhost:5173/`
 - API health: `http://localhost:3001/health`
+- Development design system: `http://localhost:5173/design`
 
-Both responded successfully at last check. If the processes are no longer running in a new session, restart with `corepack pnpm dev`. The web page is only the foundation placeholder; the POS interface is planned for M8.
+The web app requires an available PostgreSQL database and seeded shop/admin data for sign-in and API-backed screens.
 
 ## Completed: M2 — Authentication and staff management
 
@@ -137,14 +138,27 @@ Both responded successfully at last check. If the processes are no longer runnin
 - Prisma schema validation — passed.
 - **Not run:** applying M6–M7 migrations; configure the Supabase `DATABASE_URL` first.
 
-## Next: M8 — UI and integration
+## Completed: M8 — Frontend
 
-Connect the staff/admin screens to the completed API flows, then verify the Phase 1 acceptance paths end to end.
+- Added self-hosted Noto Sans and Noto Serif fonts with license text, CSS design tokens, Tailwind token mappings, accessible focus/status treatments, and responsive Eminent Jay login, role-based navigation, POS and admin layouts. `/design` is available only in Vite development mode.
+- Added sign-in, forced password change, sign-out, role and permission-gated screens, and authenticated API requests using the server session cookie.
+- Built the responsive POS with product search/type/department filters, quantity-aware stock availability for regular, decant, bulk, and bundle items, cart hold/resume, cash/change, M-Pesa STK, split cash/STK, status polling, and a development-only mock payment completion control.
+- Connected shift open/cash movement/close and reconciliation summaries; sales history, refund requests/review, 58/80 mm receipt printing and PDF; staff creation/activation, catalog creation, stock lookup/adjustment, damaged stock, owner overview, and unmatched-payment reconciliation.
+- Added server protection for the development mock-payment completion action. Admin screens are hidden from staff navigation and guarded on direct routes; server permissions remain authoritative.
+
+## M8 checks
+
+- `corepack pnpm test` — passed, 29 tests.
+- `corepack pnpm lint` — passed.
+- `corepack pnpm typecheck` — passed.
+- `corepack pnpm format:check` — passed.
+- `corepack pnpm build` — passed for API and web; PWA shell generation completed.
+- **Not run:** browser end-to-end sign-in/sale/refund flow or applying the M6–M7 migrations. Both require a configured Supabase `DATABASE_URL` and seeded database.
 
 ## Handoff reminders
 
 - Read `/docs/SPEC.md`, then this file, before continuing implementation.
-- Use the approved stack and milestone scope from the user prompt; do not start Phase 2–4 work.
+- Use the approved stack and milestone scope from the user prompt; do not start Phase 2–4 work unless asked.
 - Use `corepack pnpm` commands when a `pnpm` shim is not available.
 - No `.env` or production secrets have been created or committed. The seed generates a one-time admin password if `ADMIN_SEED_PASSWORD` is empty and prints it when creating the initial account.
-- Lipwa provider field names and callback verification are still a `TODO(lipwa)`; consult current documentation before M6.
+- Lipwa credentials, channel ID, callback URL, and a live merchant transaction remain a `TODO(lipwa)` before production.

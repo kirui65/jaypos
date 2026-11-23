@@ -66,6 +66,7 @@ function safeUser(user: {
   username: string;
   email: string | null;
   role: { name: string };
+  active?: boolean;
   mustChangePassword: boolean;
   discountLimitPct: number;
   permissionOverridesJson: unknown;
@@ -87,6 +88,7 @@ function safeUser(user: {
     username: user.username,
     email: user.email,
     role: user.role.name,
+    active: user.active ?? true,
     mustChangePassword: user.mustChangePassword,
     discountLimitPct: user.discountLimitPct,
     permissions: [...permissions],

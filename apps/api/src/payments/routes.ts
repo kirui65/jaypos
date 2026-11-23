@@ -6,7 +6,12 @@ import { requirePermission, type AuthenticatedRequest } from "../auth/middleware
 import { normalizeKenyanPhone } from "@eminent/shared";
 import { prisma } from "../db.js";
 import { deductSaleStock } from "../sales/inventory.js";
-import { getPaymentProvider, type PaymentProvider, type PaymentSnapshot } from "./provider.js";
+import {
+  getPaymentProvider,
+  MockPaymentProvider,
+  type PaymentProvider,
+  type PaymentSnapshot,
+} from "./provider.js";
 
 const callbackInput = z.object({
   checkout_id: z.string().trim().min(1).max(200),
@@ -382,6 +387,50 @@ export function createPaymentsRouter(provider: PaymentProvider = getPaymentProvi
       } catch {
         return response.status(502).json({ error: "Payment status could not be checked" });
       }
+    },
+  );
+
+  router.post(
+    "/:id/mock-complete",
+    requirePermission("sales.create"),
+    async (request: AuthenticatedRequest, response) => {
+      if (
+        (process.env.NODE_ENV && process.env.NODE_ENV !== "development") ||
+        !(provider instanceof MockPaymentProvider)
+      )
+        return response.status(404).json({ error: "Not found" });
+      if (!z.string().uuid().safeParse(request.params.id).success)
+        return response.status(400).json({ error: "Invalid payment id" });
+      const payment = await prisma.payment.findFirst({
+        where: {
+          id: request.params.id!,
+          shopId: request.authUser!.shopId,
+          method: PaymentMethod.mpesa_stk,
+        },
+        include: { sale: true },
+      });
+      if (!payment) return response.status(404).json({ error: "STK payment not found" });
+      if (!canAccessPayment(request.authUser!, payment.sale.sellerId))
+        return response.status(403).json({ error: "Permission denied" });
+      if (!payment.providerRequestId)
+        return response.status(409).json({ error: "STK payment has not been initiated" });
+      provider.setStatus(payment.providerRequestId, {
+        status: "paid",
+        amountCents: payment.amountCents,
+        phone: payment.phone,
+        receipt: "MOCK-" + payment.id.slice(0, 8).toUpperCase(),
+        transactionId: payment.providerRequestId,
+        raw: { simulated: true },
+      });
+      const result = await applyProviderSnapshot(
+        payment.id,
+        await provider.queryStatus(payment.providerRequestId),
+      );
+      return response.json({
+        paymentId: payment.id,
+        status: result.status,
+        saleCompleted: "saleCompleted" in result ? result.saleCompleted : false,
+      });
     },
   );
 
