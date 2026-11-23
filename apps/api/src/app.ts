@@ -4,6 +4,8 @@ import { authRouter } from "./auth/routes.js";
 import { requireAuth } from "./auth/middleware.js";
 import { catalogRouter } from "./catalog/routes.js";
 import { stockRouter } from "./stock/routes.js";
+import { salesRouter } from "./sales/routes.js";
+import { shiftsRouter } from "./shifts/routes.js";
 
 const healthResponseSchema = z.object({
   status: z.literal("ok"),
@@ -52,5 +54,7 @@ export function createApp() {
   app.use("/api", requireAuth);
   app.use("/api/catalog", catalogRouter);
   app.use("/api/stock", stockRouter);
+  app.use("/api/sales", salesRouter);
+  app.use("/api/shifts", shiftsRouter);
   return app;
 }

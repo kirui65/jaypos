@@ -15,6 +15,12 @@ describe("protected API routes", () => {
     const response = await request(createApp()).get("/api/auth/staff");
     expect(response.status).toBe(401);
     expect(response.body).toEqual({ error: "Authentication required" });
+
+    const shifts = await request(createApp()).get("/api/shifts/current");
+    expect(shifts.status).toBe(401);
+
+    const sales = await request(createApp()).post("/api/sales").send({});
+    expect(sales.status).toBe(401);
   });
 
   it("allows credentialed browser requests only from the configured web origin", async () => {

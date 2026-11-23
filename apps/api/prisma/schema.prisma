@@ -106,6 +106,8 @@ model Shop {
   refundItems    RefundItem[]
   cashMovements  CashMovement[]
   stockReports   StockReport[]
+  heldCarts      HeldCart[]
+  receiptCounter ReceiptCounter?
 
   @@map("shops")
 }
@@ -171,6 +173,7 @@ model User {
   refundsApproved        Refund[]     @relation("RefundApprover")
   shifts                 Shift[]
   stockReports           StockReport[]
+  heldCarts              HeldCart[]
 
   @@unique([shopId, username])
   @@index([shopId, active])
@@ -483,6 +486,7 @@ model Sale {
 
   @@index([shopId, createdAt])
   @@index([shopId, sellerId, createdAt])
+  @@unique([shopId, receiptNo])
   @@index([receiptNo])
   @@map("sales")
 }
@@ -588,9 +592,36 @@ model Shift {
   seller            User           @relation(fields: [sellerId], references: [id])
   sales             Sale[]
   cashMovements     CashMovement[]
+  heldCarts         HeldCart[]
 
   @@index([shopId, sellerId, openedAt])
   @@map("shifts")
+}
+
+model HeldCart {
+  id        String   @id @default(uuid()) @db.Uuid
+  shopId    String   @db.Uuid @map("shop_id")
+  sellerId  String   @db.Uuid @map("seller_id")
+  shiftId   String   @db.Uuid @map("shift_id")
+  label     String?
+  cartJson  Json     @map("cart_json")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  shop      Shop     @relation(fields: [shopId], references: [id])
+  seller    User     @relation(fields: [sellerId], references: [id])
+  shift     Shift    @relation(fields: [shiftId], references: [id])
+
+  @@index([shopId, sellerId, createdAt])
+  @@map("held_carts")
+}
+
+model ReceiptCounter {
+  shopId    String   @id @db.Uuid @map("shop_id")
+  lastValue Int      @default(0) @map("last_value")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  shop      Shop     @relation(fields: [shopId], references: [id])
+
+  @@map("receipt_counters")
 }
 
 model CashMovement {

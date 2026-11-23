@@ -4,10 +4,10 @@ Last updated: 2026-11-23
 
 ## Current state
 
-- **Approved scope:** Phase 1, milestones M1–M8. M1–M4 are complete; resume at **M5: Sales and shifts**. The existing approval covers the planned milestones; do not restart at M1.
+- **Approved scope:** Phase 1, milestones M1–M5 are complete; resume at **M6: Payments**. The existing approval covers the planned milestones; do not restart at M1.
 - **Source of truth:** `/docs/SPEC.md`. `/SPEC.md` and `/docs/SPEC.md` currently contain identical copies. Preserve both unless asked to change them.
-- **Latest implementation commit:** `b4c45ee` — `feat: add catalog management`.
-- **Working tree:** Supabase database decision documentation is being updated; the two original spec files remain untracked and were not included in the M1 commit.
+- **Latest implementation commit:** `6ed1a40` — `feat: add stock ledger operations` (M5 is currently uncommitted).
+- **Working tree:** M5 sales and shifts implementation is ready for commit; the two original spec files remain untracked and were not included in the M1 commit.
 
 ## Completed: M1 — Foundation
 
@@ -87,9 +87,27 @@ Both responded successfully at last check. If the processes are no longer runnin
 - Prisma schema validation — passed.
 - **Not run:** applying the M4 migration; configure `DATABASE_URL` with the Supabase PostgreSQL connection string first.
 
-## Next: M5 — Sales and shifts
+## Completed: M5 — Sales and shifts
 
-Implement shift open/close and cash reconciliation, held carts, idempotent sales, server-calculated totals and discounts, split/cash payments, receipt numbering, and transactional stock deductions for regular, decant, and bundle sales. Keep STK initiation in M6.
+- Added seller-owned shift open/current/close flows, audited cash in/out, and transactional close reconciliation for expected cash, manual M-Pesa, card, counted cash, and variance. A database partial unique index prevents multiple open shifts per seller.
+- Added held cart create/list/resume endpoints. Carts store variant IDs and quantities; sale prices are always recalculated by the server.
+- Added idempotent `POST /api/sales` keyed by `client_uuid`, an atomic per-shop receipt counter, server-owned variant prices/costs, discount limits/reasons, cash change, split cash/manual M-Pesa/card payments, and staff-safe sale serialization.
+- Completed sales, sale items/payments, stock-level changes, stock ledger movements, and audit entries are committed in one serializable transaction. Regular variants, bundle components, bottle quantities/ml, and decants use conditional stock deductions to prevent overselling. M-Pesa manual payments remain pending verification. STK is deferred to M6.
+- Added math, stock demand, staff cost-redaction, and shift cash reconciliation tests.
+- **TODO(spec):** sales tax currently remains zero until VAT treatment is confirmed. Until configured, discounts require a reason unless a shop threshold is set.
+
+## M5 checks
+
+- `corepack pnpm test` — passed, 26 tests.
+- `corepack pnpm lint` — passed.
+- `corepack pnpm typecheck` — passed.
+- `corepack pnpm format:check` — passed.
+- Prisma schema validation — passed.
+- **Not run:** applying the M5 migration; configure `DATABASE_URL` with the Supabase PostgreSQL connection string first.
+
+## Next: M6 — Payments
+
+Implement provider interface, mock and Lipwa adapters, STK initiation and callback verification, idempotency, payment status checks/expiry, amount mismatch handling, and unmatched payment queue. Read current Lipwa documentation before provider-specific implementation.
 
 ## Handoff reminders
 
