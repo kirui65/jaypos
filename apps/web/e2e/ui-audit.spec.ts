@@ -78,6 +78,13 @@ for (const role of ['public', 'admin', 'staff'] as const) {
 
           const problems: string[] = [];
           if (role === 'public') {
+            await page.route('**/api/brand', (route) =>
+              route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ brandName: 'Eminent Jay', logoUrl: '/logo.webp' }),
+              }),
+            );
             await page.route('**/api/auth/me', (route) =>
               route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
             );

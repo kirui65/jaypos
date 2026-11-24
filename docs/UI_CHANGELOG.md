@@ -1,5 +1,12 @@
 # UI changelog
 
+## 2026-11-24 — N1 audit completion
+
+- Kept the existing N1 shell, product card, filter, login, toast, and status-pill implementation. Added a deterministic public brand response to the Playwright login audit so it exercises the configured logo without requiring an API or database process.
+- Re-ran the audit at 360×740, 1024×768, 1280×720, and 1366×768. Public login passed all viewports; the existing POS checks assert no body scroll and an in-viewport Pay action at 1366×768, and verify that every nav link has an SVG icon.
+- Latest `bash scripts/audit.sh`: **52 PASS, 6 WARN, 0 FAIL**. Mobile Lighthouse performance 87, accessibility 100, best practices 96, LCP 815 ms, CLS 0.002; TBT 506 ms is a WARN. Desktop performance 100, accessibility 100, best practices 96, LCP 295 ms, CLS 0.001, TBT 0 ms.
+- The audit saved updated public login screenshots for all four viewports in `audit/screenshots/`. Admin and staff routes were skipped because `E2E_ADMIN_*` and `E2E_STAFF_*` credentials were not configured; authenticated POS and sales could not be visually rechecked in this run.
+
 ## 2026-11-23
 
 - Moved palette, typeface, radius, and shadow definitions into `apps/web/src/tokens.css` and made the application stylesheet consume the shared tokens.

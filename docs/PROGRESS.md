@@ -1,6 +1,13 @@
 # Project Progress
 
-Last updated: 2026-11-23
+Last updated: 2026-11-24
+
+## N1 UI foundation handoff (2026-11-24)
+
+- Reviewed the N1 implementation in `6a2c318` against the backlog. The fixed shell, role-based sidebar, compact top bar, product cards and placeholders, filters/focus rings, branded login, toast/status treatments, and POS browser assertions were already present; these were left intact.
+- The missing public-login audit setup was completed by stubbing `/api/brand` with the shop logo in the public Playwright test. The latest full audit completed with 52 PASS, 6 WARN, and 0 FAIL. Typecheck, lint, tests, and build pass. Updated screenshots cover public login at 360×740, 1024×768, 1280×720, and 1366×768.
+- Latest Lighthouse: mobile performance 87, accessibility 100, best practices 96, LCP 815 ms, CLS 0.002, TBT 506 ms (WARN); desktop performance 100, accessibility 100, best practices 96, LCP 295 ms, CLS 0.001, TBT 0 ms.
+- **Verification limit:** authenticated admin/staff pages, including POS and sales, were skipped because E2E credentials were not configured. The 1366×768 POS assertions remain in the audit spec, but they were not exercised by this run. API load check was also skipped because no API service was configured.
 
 ## Supabase integration handoff (2026-11-23)
 
