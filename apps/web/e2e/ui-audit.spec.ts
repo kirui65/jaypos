@@ -35,11 +35,13 @@ const VIEWPORTS = [
 
 // Design rules from the spec (section 10.1). Keep in sync with the tokens file.
 const PALETTE_HEX = [
-  '0B0B0B', '141414', '1C1C1C', '2A2A2A', // blacks
-  'D4AF37', 'E8CF7A', '8A6D1A', 'FBF5E1', // golds
-  'FFFFFF', 'F7F6F2', 'E7E3D6', '6B6B66', // neutrals
-  'D0CEC5', // softer text on dark surfaces
-  '9B9B94', 'AAA9A2', '205D26', '80540C', 'FBF3DD', 'C6C4BB', 'FFeded', 'C4C2B9', '77766F', // muted, control and status tokens
+  '14243A', '1A2B40', '1D3858', '2B4A6D', '173452', // navy surfaces
+  '2864C5', '356FB8', '1D4F91', 'EAF2FB', // blue accents
+  'F2C94C', 'F7D978', '745900', 'FFF7DC', // warm yellow accents
+  'FFFFFF', 'F5F8FC', 'DCE5EF', '596A7E', // neutrals
+  'D5E0EC', 'B6C5D6', 'C8D4E1', // softer text on dark surfaces
+  '92928B', '205D26', '80540C', 'BECBD9', 'FFeded', '627D9A', // muted, control and status tokens
+  'A91F1F', '7F1919', 'FFF0F0', 'EDF5ED', 'E8F3E9', '9F2424', // status tokens
   '2E7D32', 'B26A00', 'C62828',           // status
   'E8F3E9', 'FBEFD9', 'FBE7E7',           // status washes
 ];
@@ -232,7 +234,7 @@ for (const role of ['public', 'admin', 'staff'] as const) {
           expect.soft(fonts.body, 'body font-family').toMatch(vp.width <= 640 ? /system-ui|ej sans/i : /ej sans/i);
           if (vp.width > 640) expect.soft(fonts.loaded.length, 'web fonts loaded').toBeGreaterThan(0);
 
-          // 6. Colours: only the Eminent Jay palette (catches default browser grey, stray blues, etc.)
+          // 6. Colours: only the Eminent Jay palette (catches default browser grey and stray colors)
           const offPalette = await page.evaluate((allowed: string[]) => {
             const seen = new Map<string, string>();
             for (const el of Array.from(document.querySelectorAll<HTMLElement>('body *'))) {

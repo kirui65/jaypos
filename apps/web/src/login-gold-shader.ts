@@ -99,7 +99,7 @@ export function mountLoginShader(host: HTMLElement): () => void {
     gl.enableVertexAttribArray(position);
     gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
 
-    const colors = ["--ej-black", "--ej-bronze", "--ej-gold", "--ej-gold-soft"].map(tokenColor);
+    const colors = ["--ej-black", "--ej-bronze", "--ej-blue", "--ej-yellow"].map(tokenColor);
     ["uBlack", "uBronze", "uGold", "uPale"].forEach((name, index) => gl.uniform3fv(gl.getUniformLocation(activeProgram, name), colors[index]!));
     const resLocation = gl.getUniformLocation(activeProgram, "uRes");
     const timeLocation = gl.getUniformLocation(activeProgram, "uTime");

@@ -1,5 +1,12 @@
 # UI changelog
 
+## 2026-11-24 — White, blue, and warm yellow POS theme
+
+- Replaced the gold-on-black palette with bright white/cool-white page surfaces, blue actions and selected states, a deep navy sidebar/cart, and warm yellow sale-total accents.
+- Updated shared tokens, Tailwind colors, the design preview swatches, login and boot colors, PWA theme color, and theme documentation.
+- Refined operational typography to a consistent sans-serif hierarchy, strengthened primary button labels, and removed duplicate token/component declarations.
+- Fixed POS cards so the full product detail and price fit, show stock on every item, and use consistent blue/yellow placeholder surfaces. The top bar now names the active route, and the held-cart control has readable contrast.
+
 ## 2026-11-24 — Loading and performance
 
 - Added the inline dark boot splash, gold progress line, and theme color; split the compact public-login CSS from the authenticated app stylesheet so mobile login does not parse the full POS/admin CSS before sign-in.
@@ -45,3 +52,15 @@
 ### Verification follow-up
 
 - The latest loading changes pass typecheck, lint, tests, and build. The latest mobile Lighthouse measurement remains below target because of high TBT; the final Playwright sweep needs a clean completion after the phone product-card sizing fix. See `docs/PROGRESS.md` for the current handoff.
+
+## 2026-11-24 — Owner profitability and sales invoices
+
+- Added owner dashboard cards for today's net sales, gross profit, and gross margin, with the seven-day chart using server-calculated refund-aware totals.
+- Added Invoice PDF actions to sales records, and previous/next pagination to browse beyond the first 100 transactions.
+- Checkout now accepts optional customer name, phone, and email for invoices. Printable sales invoices include those details and clearly state that the PDF is not an eTIMS tax invoice.
+- Added a Download report PDF action to the admin overview and a product photo form with URL, device upload, camera capture, and live preview options.
+- Corrected a late square-image rule that overrode the POS card art height. Cards now keep the price visible, clamp long product names cleanly, and reveal the branded fallback when a linked image cannot load.
+- Added an item-by-item checkout review modal with quantity edit and remove controls, plus an admin editor for business details and receipt/invoice copy.
+- Made review quantity buttons visibly blue on white, clarified their disabled state, and separated lowering quantity from removing a cart item.
+- Added a print-ready invoice preview with print and PDF download actions from Sales & receipts; the admin Receipts & invoices screen now shows live receipt and invoice samples that respond to template edits.
+- Unified operational page, modal, and table typography around the Noto Sans UI face and a consistent size/weight hierarchy while preserving the brand wordmark treatment.

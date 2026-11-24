@@ -5,6 +5,13 @@ import { prisma } from "../db.js";
 import { requirePermission, type AuthenticatedRequest } from "../auth/middleware.js";
 
 const objectJson = z.record(z.string(), z.unknown()).default({});
+const imageUrlInput = z.union([
+  z.string().url().max(2048),
+  z
+    .string()
+    .max(300_000)
+    .regex(/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/),
+]);
 const departmentInput = z
   .object({
     name: z.string().trim().min(1).max(80),
@@ -59,7 +66,7 @@ const variantInput = z
     sku: z.string().trim().min(1).max(80),
     barcode: z.string().trim().max(100).nullable().optional(),
     attributes: objectJson,
-    imageUrl: z.string().url().nullable().optional(),
+    imageUrl: imageUrlInput.nullable().optional(),
     priceCents: z.number().int().min(0),
     costCents: z.number().int().min(0),
     reorderLevel: z.number().int().min(0).default(0),
@@ -81,7 +88,7 @@ const productInput = z
     name: z.string().trim().min(1).max(160),
     description: z.string().trim().max(4000).nullable().optional(),
     attributes: objectJson,
-    imageUrl: z.string().url().nullable().optional(),
+    imageUrl: imageUrlInput.nullable().optional(),
     variants: z.array(variantInput).min(1).max(300),
   })
   .strict();
@@ -93,7 +100,7 @@ const productPatchInput = z
     name: z.string().trim().min(1).max(160).optional(),
     description: z.string().trim().max(4000).nullable().optional(),
     attributes: objectJson.optional(),
-    imageUrl: z.string().url().nullable().optional(),
+    imageUrl: imageUrlInput.nullable().optional(),
     active: z.boolean().optional(),
   })
   .strict();
@@ -163,6 +170,10 @@ type CatalogProductRecord = {
 };
 
 export function publicProduct(product: CatalogProductRecord, admin: boolean) {
+  const imageSource = (imageUrl: string | null, id: string) =>
+    imageUrl?.startsWith("data:image/webp;base64,")
+      ? `/api/catalog/products/${id}/image`
+      : imageUrl;
   const serializeVariant = (variant: CatalogVariantRecord) => ({
     id: variant.id,
     sku: variant.sku,
@@ -186,7 +197,7 @@ export function publicProduct(product: CatalogProductRecord, admin: boolean) {
     name: product.name,
     description: product.description,
     attributes: product.attributesJson,
-    imageUrl: product.imageUrl,
+    imageUrl: imageSource(product.imageUrl, product.id),
     active: product.active,
     department: product.department,
     productType: product.productType,
@@ -224,6 +235,26 @@ function validateAttributes(
 }
 
 export const catalogRouter = Router();
+catalogRouter.get(
+  "/products/:id/image",
+  requirePermission("stock.read"),
+  async (request: AuthenticatedRequest, response) => {
+    if (!z.string().uuid().safeParse(request.params.id).success)
+      return response.status(400).json({ error: "Invalid product id" });
+    const product = await prisma.product.findFirst({
+      where: { id: request.params.id!, shopId: request.authUser!.shopId },
+      select: { imageUrl: true },
+    });
+    const prefix = "data:image/webp;base64,";
+    if (!product?.imageUrl?.startsWith(prefix))
+      return response.status(404).json({ error: "Product photo not found" });
+    response.setHeader("Cache-Control", "private, max-age=86400, immutable");
+    return response
+      .type("image/webp")
+      .send(Buffer.from(product.imageUrl.slice(prefix.length), "base64"));
+  },
+);
+
 catalogRouter.get(
   "/",
   requirePermission("stock.read"),

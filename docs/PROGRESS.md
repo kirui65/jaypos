@@ -203,3 +203,20 @@ The web app requires an available PostgreSQL database and seeded shop/admin data
 - `corepack pnpm -r --if-present run typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` passed during the latest audit.
 - Latest completed Lighthouse: desktop performance 97, LCP 1,217 ms, CLS 0.004. Latest mobile score 73, LCP 1,326 ms, CLS 0.000, TBT 1,520 ms; mobile target remains unmet despite disabling the shader on small devices and splitting login CSS.
 - Authenticated Playwright sweep was stopped after 26/59 cases while resolving touch sizing. Rerun `bash scripts/audit.sh` with `E2E_ADMIN_USER`, `E2E_ADMIN_PASS`, `E2E_STAFF_USER`, and `E2E_STAFF_PASS` before marking loading/performance complete.
+
+## Post-M8 — POS theme update (2026-11-24)
+
+- Updated the app palette to white, blue, and warm yellow: bright surfaces, blue actions/navigation, a deep navy sidebar and cart, and yellow total/highlight accents.
+- Updated the design tokens, Tailwind theme, design preview swatches, login/boot colors, PWA theme color, and the Phase 1 theme documentation. Follow-up polish tightened heading hierarchy, fixed clipped product details, made stock counts visible on every POS card, unified placeholder colors, improved held-cart contrast, and made the top bar identify the current route.
+- `corepack pnpm -r --if-present run typecheck` and `corepack pnpm build` passed. Lint, automated tests, Lighthouse, and authenticated E2E were not run for this visual update; the prior mobile Lighthouse and authenticated E2E limitations remain as recorded above.
+
+## Post-M8 — Profitability and invoices (2026-11-24)
+
+- Added an admin-only owner summary endpoint for Nairobi-local daily net sales, gross profit, and gross margin for today and the previous seven days. It uses sale-time cost snapshots and approved refund events, including cost recovery only for returns put back into sellable stock. The dashboard no longer derives financial totals from the first 100 sales.
+- Added audited, numbered invoices from completed sales, with optional buyer name/phone/email captured during checkout, line items, recorded discounts/tax, payment totals, and balance due. Sales history now opens a print-ready HTML invoice preview and offers a direct PDF download. The PDF is explicitly labeled as a sales record, not an eTIMS tax invoice.
+- Added a weekly profitability report PDF to the admin overview, previous/next pagination to the sales register, and a product photo field with live preview when adding catalog items and opening stock. The field accepts public URLs, local uploads, and mobile camera capture; uploads are resized to WebP before saving.
+- Added admin controls for shop details, receipt footer, and invoice terms, with live receipt and invoice samples on the Receipts & invoices page. Receipt and invoice previews include saved customer details when provided; document settings do not change sale items or amounts. Added a quantity review/edit step before checkout payment and improved its control contrast, spacing, and remove behavior.
+- Fixed the POS card artwork sizing conflict that forced square artwork over the fixed card layout. Cards now keep a consistent compact photo area, wrap product names across two lines, keep prices visible, and show the branded fallback if a linked photo fails to load.
+- Updated typography tokens and alignment for page headings, dialogs, forms, and tables; standard POS screens use a consistent sans-serif hierarchy.
+- **TODO(spec):** eTIMS transmission and tax configuration remain unimplemented; see `docs/DECISIONS.md`.
+- Checks: typecheck, lint, tests (34), and production build passed. Backend invoice renderer files are formatted. `format:check` reports pre-existing formatting differences in the large frontend files; unrelated areas were left untouched.

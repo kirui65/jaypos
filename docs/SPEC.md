@@ -1,6 +1,6 @@
 # Eminent Jay - Retail Shop Web POS (Perfumes, Cosmetics, Boutique) - System Specification
 
-> Project name: **Eminent Jay**. Theme: **gold, black, and white** (see 10.1).
+> Project name: **Eminent Jay**. Theme: **white, blue, and warm yellow** (see 10.1).
 > Audience: the coding agent (and any developer) building this project.
 > Read this whole file before writing code. When something here is unclear or conflicts with reality, ask or leave a `TODO(spec)` comment. Do not guess silently.
 > Items marked **[ASSUMPTION]** are defaults chosen to keep moving. They can be changed by the project owner.
@@ -462,44 +462,48 @@ Conventions: plural nouns, cursor/limit pagination, consistent error shape `{ er
 - Always show: online/offline state, unsynced count, current user, current shift.
 - Clear empty states, loading states, and error messages in plain language ("M-Pesa request timed out. Retry or choose another method").
 - Confirm destructive actions. Never show raw errors to staff.
-- Premium, professional look in the Eminent Jay theme (gold, black, white; see 10.1). Consistent components (a small design system built on the design tokens below).
+- Premium, professional look in the Eminent Jay theme (white, blue, warm yellow; see 10.1). Consistent components (a small design system built on the design tokens below).
 - Accessible: labels, keyboard navigation, focus states.
 - Interface language English first; structure strings for English/Swahili (i18n) from the start.
 - Currency displayed as `KES 1,250.00`. Phone numbers displayed locally (07xx) but stored normalised.
 
 
-### 10.1 Brand and Theme: Eminent Jay (gold, black, white)
+### 10.1 Brand and Theme: Eminent Jay (white, blue, warm yellow)
 
 **Name:** Eminent Jay. Use it in the app header, login page, browser tab title, PWA name, receipt header, and SMS signature.
 
-**Design intent:** luxury, calm, and precise, like a high-end perfume counter. The interface is mostly white and black with generous spacing. **Gold is a rare accent, never a fill for large areas.** If gold appears everywhere, it looks cheap; if it appears only where the eye should go, it looks premium.
+**Design intent:** calm, clear, and practical for a busy point of sale. Keep the product and admin surfaces bright, use blue for primary actions and navigation, and reserve warm yellow for totals and small highlights. Deep navy provides contrast in the sidebar and POS cart.
 
-**How to build it:** define all tokens below once (CSS variables plus the Tailwind theme extension). **No hex colours, font sizes, radii, or shadows may be hard-coded in components.** Build a dev-only `/design` route that shows every token and component state so the look can be reviewed without clicking through the app. **[ASSUMPTION]** The hex values are defaults; replace them if the client has an official brand gold.
+**How to build it:** define all tokens below once (CSS variables plus the Tailwind theme extension). **No hex colours, font sizes, radii, or shadows may be hard-coded in components.** Build a dev-only `/design` route that shows every token and component state so the look can be reviewed without clicking through the app. **[ASSUMPTION]** The blue and warm yellow values are defaults; replace them if the client provides official brand colours.
 
 #### Colour tokens
 
 | Token | Value | Use |
 |---|---|---|
-| `--ej-black` | `#0B0B0B` | Sidebar, login background, cart panel, primary text on white |
-| `--ej-ink` | `#141414` | Raised surfaces on black |
-| `--ej-charcoal` | `#1C1C1C` | Hover/selected rows in black areas |
-| `--ej-graphite` | `#2A2A2A` | Dividers on black |
-| `--ej-gold` | `#D4AF37` | Primary action, active marker, focus on dark, key totals |
-| `--ej-gold-soft` | `#E8CF7A` | Gold hover, subtle highlights on black |
-| `--ej-gold-deep` | `#8A6D1A` | **Gold text on white**, pressed state, focus ring on white (about 4.9:1 on white) |
-| `--ej-gold-wash` | `#FBF5E1` | Selected row/card background, soft highlights on white |
+| `--ej-black` | `#14243A` | Deep navy sidebar, login background, cart panel, primary text on white |
+| `--ej-ink` | `#1A2B40` | Main text and raised surfaces |
+| `--ej-charcoal` | `#1D3858` | Hover/selected rows in navy areas |
+| `--ej-graphite` | `#2B4A6D` | Dividers on navy |
+| `--ej-blue` | `#2864C5` | Primary action, active marker, focus on dark, key actions |
+| `--ej-blue-soft` | `#356FB8` | Button hover and subtle emphasis |
+| `--ej-blue-deep` | `#1D4F91` | Blue text on white and focus ring on white |
+| `--ej-blue-wash` | `#EAF2FB` | Selected row/card background and soft highlights |
+| `--ej-yellow` | `#F2C94C` | POS total and small highlights on navy |
+| `--ej-yellow-soft` | `#F7D978` | Warm yellow hover and details on navy |
+| `--ej-yellow-deep` | `#745900` | Yellow text on white |
+| `--ej-yellow-wash` | `#FFF7DC` | Warm highlight backgrounds |
 | `--ej-white` | `#FFFFFF` | Cards, inputs, main content |
-| `--ej-paper` | `#F7F6F2` | Page background, table header, disabled fill |
-| `--ej-line` | `#E7E3D6` | Borders and dividers on white |
-| `--ej-muted` | `#6B6B66` | Secondary text on white (about 5.4:1) |
+| `--ej-paper` | `#F5F8FC` | Page background, table header, disabled fill |
+| `--ej-line` | `#DCE5EF` | Borders and dividers on white |
+| `--ej-muted` | `#596A7E` | Secondary text on white |
 | `--ej-success` / `--ej-warning` / `--ej-danger` | `#2E7D32` / `#B26A00` / `#C62828` | Status only; each has a pale wash for pills (`#E8F3E9`, `#FBEFD9`, `#FBE7E7`) |
 
-Verify every text/background pair with a contrast checker (AA: 4.5:1 for text, 3:1 for icons, borders, and focus rings). Black text on `--ej-gold` (about 9:1) and gold on black (about 9:1) pass. **Plain `--ej-gold` text on white fails; use `--ej-gold-deep`.**
+Verify every text/background pair with a contrast checker (AA: 4.5:1 for text, 3:1 for icons, borders, and focus rings). White text on `--ej-blue` and navy text on `--ej-yellow` pass. Use `--ej-blue-deep` for blue text on white; reserve yellow text for dark navy backgrounds.
 
-#### The gold budget (rules for using gold)
-- Gold is used for: the one primary button in an area, the active navigation marker, focus rings on dark surfaces, the grand total, selected states (with `--ej-gold-wash`), thin 1-2 px lines, and small details such as a dot or underline.
-- Gold is **not** used for: body text, status colours, large backgrounds, table fills, or gradients. One gold-filled element per screen region.
-- Destructive actions are always danger red, never gold.
+#### Accent rules
+- Blue is used for primary buttons, active navigation, focus rings, and selected states (with `--ej-blue-wash`).
+- Warm yellow is reserved for the POS grand total, small markers, and selected details on navy surfaces. Do not use it for body text, status colours, large backgrounds, table fills, or gradients.
+- Destructive actions are always danger red, never a brand accent.
 
 #### Typography
 - **UI font:** Inter (or system UI fallback). **Brand and display font:** Playfair Display or Cormorant Garamond, used only for the Eminent Jay wordmark, login heading, and receipt header. **Self-host the fonts (woff2)** with fallbacks so the till looks identical offline.
@@ -515,65 +519,66 @@ Verify every text/background pair with a contrast checker (AA: 4.5:1 for text, 3
 - **Touch targets:** at least 44 px high anywhere; 48-56 px on the POS.
 
 #### Layout
-- **App shell:** black sidebar (240 px, collapsible to a 72 px icon rail; a bottom tab bar on phones), white top bar with a 1 px line. The top bar shows the shop name, the open shift, the online/offline and unsynced indicator, and the user menu. The content area is `--ej-paper`, with content on white cards.
-- **Navigation item:** white icon and label; hover `--ej-charcoal`; active item has a 3 px gold bar on its left edge and gold icon/label on `--ej-charcoal`.
+- **App shell:** deep navy sidebar (240 px, collapsible to a 72 px icon rail; a bottom tab bar on phones), white top bar with a 1 px line. The top bar shows the shop name, the open shift, the online/offline and unsynced indicator, and the user menu. The content area is `--ej-paper`, with content on white cards.
+- **Navigation item:** white icon and label; hover `--ej-charcoal`; active item has a 3 px warm yellow bar on its left edge and yellow icon/label on `--ej-charcoal`.
 - **Staff see a shorter menu than the admin.** Hidden items do not leave gaps.
 
 #### Components and states
-- **Primary button:** `--ej-gold` background, black text, 600 weight, 44 px high (56 px for Pay). Hover `--ej-gold-soft`. Pressed `--ej-gold-deep` with white text. Disabled: `--ej-paper` background, `--ej-muted` text, no shadow. Loading: spinner replaces the label and the button keeps its width.
-- **Secondary button:** black background, white text (hover `--ej-charcoal`). **Tertiary/ghost:** text only with a gold underline on hover. **Danger:** red background, white text.
-- **Inputs:** 44 px high, 1 px `--ej-line` border, 8 px radius, label above, helper text below in `--ej-muted`. Focus: 2 px `--ej-gold-deep` ring on white (gold on dark surfaces). Error: red border plus a clear message with an icon below the field.
-- **Tables:** header row `--ej-paper` with 12 px uppercase `--ej-muted` labels; rows 48 px (a 40 px dense option); hover and selected `--ej-gold-wash`, selected also has a 3 px gold left border; money right-aligned; sticky header; zebra striping off by default.
+- **Primary button:** `--ej-blue` background, white text, 600 weight, 44 px high (56 px for Pay). Hover `--ej-blue-soft`. Pressed `--ej-blue-deep` with white text. Disabled: `--ej-paper` background, `--ej-muted` text, no shadow. Loading: spinner replaces the label and the button keeps its width.
+- **Secondary button:** navy background, white text (hover `--ej-charcoal`). **Tertiary/ghost:** text only with a blue underline on hover. **Danger:** red background, white text.
+- **Inputs:** 44 px high, 1 px `--ej-line` border, 8 px radius, label above, helper text below in `--ej-muted`. Focus: 2 px `--ej-blue-deep` ring on white. Error: red border plus a clear message with an icon below the field.
+- **Tables:** header row `--ej-paper` with 12 px uppercase `--ej-muted` labels; rows 48 px (a 40 px dense option); hover and selected `--ej-blue-wash`, selected also has a 3 px blue left border; money right-aligned; sticky header; zebra striping off by default.
 - **Status pills:** pale wash background, darker text, and an icon plus a label (never colour alone). Examples: Paid, Pending, Failed, Low stock, Needs review, Synced, Offline.
 - **Cards and stat cards:** white, 12 px radius, soft shadow. A stat card shows a small muted label, a large tabular number, and an optional change indicator.
-- **Toasts:** black background, white text, 3 px left border (gold for info, green for success, red for error), auto-dismiss after 4 seconds, top-right on desktop and bottom on mobile. Errors stay until dismissed.
+- **Toasts:** navy background, white text, 3 px left border (blue for info, green for success, red for error), auto-dismiss after 4 seconds, top-right on desktop and bottom on mobile. Errors stay until dismissed.
 - **Modals and drawers:** white, 16 px radius, backdrop `rgba(11,11,11,.6)`. Destructive confirmations name what will be affected and use a red confirm button.
 - **Empty states:** a simple line illustration or icon, a one-line explanation, and one action.
 - **Loading:** skeleton shimmer in `--ej-paper` for lists and cards; spinners only inside buttons and for payment waiting.
 
 #### Icons, imagery, and motion
-- **Icons:** one set only (Lucide), outline style, 1.75 px stroke, 20 px default and 24 px on the POS. Black or charcoal; gold only for an active or highlighted icon.
-- **Product images:** square (1:1), `object-fit: contain` on white or `--ej-paper`. Uploads are compressed to WebP (max 800 px) and cached for offline use (thumbnails). Placeholder: a thin gold "EJ" monogram on `--ej-paper`.
+- **Icons:** one set only (Lucide), outline style, 1.75 px stroke, 20 px default and 24 px on the POS. Navy or charcoal; blue for active/highlighted icons and yellow only on navy surfaces.
+- **Product images:** square (1:1), `object-fit: contain` on white or `--ej-paper`. Uploads are compressed to WebP (max 800 px) and cached for offline use (thumbnails). Placeholder: a thin blue "EJ" monogram on `--ej-paper`.
 - **Motion:** 150 ms ease-out for hover and press, 200 ms for modals, drawers, and toasts. No bouncing or parallax. A short success check animation after a payment completes. Respect `prefers-reduced-motion`.
 
 #### Screen-specific design
-- **Login page:** black background, centered white card (16 px radius), the Eminent Jay wordmark in the serif font above it in white with a 48 px by 1 px gold line beneath, one gold primary button. Optional faint radial gold glow at about 6% opacity behind the card. No stock photos.
+- **Login page:** deep navy background with a centered glass card (16 px radius), the Eminent Jay wordmark in the serif font above it in white with a 48 px by 1 px warm yellow line beneath, one blue primary button. Optional faint blue/yellow radial glow behind the card. No stock photos.
 - **POS screen:** two zones.
-  - Left (about 65%): search and scan bar on top; department tabs (Men / Ladies / Children) as pill tabs; type chips under them; a product grid of white cards (image, name, brand, price semibold, stock badge). The selected or just-added card gets a gold border.
-  - Right (about 35%): a **black cart panel** with white text; line items with quantity steppers; a subtotal and discount area; the **grand total in gold at 32-36 px**; a full-width **Pay** button (gold, 56 px high, 18 px semibold) with a secondary Hold button outlined in white.
+  - Left (about 65%): search and scan bar on top; department tabs (Men / Ladies / Children) as pill tabs; type chips under them; a product grid of white cards (image, name, brand, price semibold, stock badge). The selected or just-added card gets a blue border.
+  - Right (about 35%): a **deep navy cart panel** with white text; line items with quantity steppers; a subtotal and discount area; the **grand total in warm yellow at 32-36 px**; a full-width **Pay** button (blue, 56 px high, 18 px semibold) with a secondary Hold button outlined in white.
   - Payment step: large method buttons (Cash, M-Pesa, Split) 64 px high; a numeric keypad for cash tendered; the M-Pesa waiting state shows a spinner, a countdown, and clear "Check status" and "Cancel" actions.
   - Must be comfortable on a 1024x768 tablet and usable on a 360 px phone (cart becomes a bottom sheet).
-- **Admin dashboard:** a row of stat cards, then a gold-and-black chart of sales, then two tables (low stock, pending items). Keep it airy, with no more than 4 to 6 widgets above the fold.
-- **Forms (products, staff, customers):** single column or two-column on desktop, grouped in cards with section titles, a sticky save bar at the bottom with Save (gold) and Cancel (ghost).
+- **Admin dashboard:** a row of stat cards, then a blue-and-yellow chart of sales, then two tables (low stock, pending items). Keep it airy, with no more than 4 to 6 widgets above the fold.
+- **Forms (products, staff, customers):** single column or two-column on desktop, grouped in cards with section titles, a sticky save bar at the bottom with Save (blue) and Cancel (ghost).
 
 #### Charts, reports, and print
-- **Chart palette:** series 1 `--ej-gold`, series 2 `--ej-black`, series 3 `--ej-muted`, series 4 `--ej-gold-deep`. Gridlines `--ej-line`, no heavy borders, direct labels where possible, tooltip black with white text. Charts must stay readable in greyscale print (use markers or labels).
+- **Chart palette:** series 1 `--ej-blue`, series 2 `--ej-yellow-deep`, series 3 `--ej-muted`, series 4 `--ej-blue-deep`. Gridlines `--ej-line`, no heavy borders, direct labels where possible, tooltip navy with white text. Charts must stay readable in greyscale print (use markers or labels).
 - **Thermal receipts:** **black and white only** (thermal printers cannot print gold). The Eminent Jay name in bold and centered at the top, a double rule, fixed-width alignment, a short footer line. Works for 58 mm and 80 mm.
-- **PDF receipts, invoices, and reports:** white page, the serif wordmark, a 2 px gold rule under the header, table header in `--ej-paper`, totals in a box with a gold left bar. Print stylesheet removes the sidebar and backgrounds.
+- **PDF receipts, invoices, and reports:** white page, the serif wordmark, a 2 px blue rule under the header, table header in `--ej-paper`, totals in a box with a warm yellow left bar. Print stylesheet removes the sidebar and backgrounds.
 - **SMS and email:** plain text signed "Eminent Jay".
 
 #### PWA and dark mode
-- **PWA:** manifest `name` and `short_name` "Eminent Jay", `theme_color` `#0B0B0B`, `background_color` `#FFFFFF`, gold-on-black icons (192, 512, and maskable), and a black splash screen.
-- **Dark mode (optional, Phase 4):** surfaces `--ej-black`, `--ej-ink`, `--ej-charcoal`; text `--ej-paper`; borders `--ej-graphite`; gold unchanged. The default experience is the light content area with black navigation.
+- **PWA:** manifest `name` and `short_name` "Eminent Jay", `theme_color` `#14243A`, `background_color` `#FFFFFF`, blue-on-navy icons (192, 512, and maskable), and a navy splash screen.
+- **Dark mode (optional, Phase 4):** surfaces `--ej-black`, `--ej-ink`, `--ej-charcoal`; text `--ej-paper`; borders `--ej-graphite`; blue and yellow unchanged. The default experience is the bright content area with navy navigation.
 
 #### Tailwind and CSS setup (reference)
 ```css
 :root {
-  --ej-black:#0B0B0B; --ej-ink:#141414; --ej-charcoal:#1C1C1C; --ej-graphite:#2A2A2A;
-  --ej-gold:#D4AF37; --ej-gold-soft:#E8CF7A; --ej-gold-deep:#8A6D1A; --ej-gold-wash:#FBF5E1;
-  --ej-white:#FFFFFF; --ej-paper:#F7F6F2; --ej-line:#E7E3D6; --ej-muted:#6B6B66;
+  --ej-black:#14243A; --ej-ink:#1A2B40; --ej-charcoal:#1D3858; --ej-graphite:#2B4A6D;
+  --ej-blue:#2864C5; --ej-blue-soft:#356FB8; --ej-blue-deep:#1D4F91; --ej-blue-wash:#EAF2FB;
+  --ej-yellow:#F2C94C; --ej-yellow-soft:#F7D978; --ej-yellow-deep:#745900; --ej-yellow-wash:#FFF7DC;
+  --ej-white:#FFFFFF; --ej-paper:#F5F8FC; --ej-line:#DCE5EF; --ej-muted:#596A7E;
   --ej-success:#2E7D32; --ej-warning:#B26A00; --ej-danger:#C62828;
   --ej-radius-sm:8px; --ej-radius-md:12px; --ej-radius-lg:16px;
 }
 ```
-Map these into `tailwind.config` under `theme.extend.colors` (for example `ej.black`, `ej.gold`) and use the names in components.
+Map these into `tailwind.config` under `theme.extend.colors` (for example `ej.black`, `ej.blue`, `ej.yellow`) and use the names in components.
 
 #### Theme acceptance criteria
 - All colours, fonts, radii, spacing, and shadows come from the tokens. No hard-coded hex values outside the token file.
 - All text passes WCAG AA, every interactive element has a visible focus state, and status never relies on colour alone.
 - The `/design` page shows every component in all its states.
 - The POS is comfortable at 1024x768 and usable at 360 px wide; Lighthouse accessibility score of 90 or more on the login, POS, and dashboard screens.
-- Gold appears only where the gold budget allows.
+- Warm yellow appears only as a small accent on navy surfaces; blue carries primary actions.
 
 ---
 
@@ -654,7 +659,7 @@ Dashboard and full reports, expenses and net profit, loyalty tiers, gift cards, 
 7. Hosting preference and budget (VPS location, domain name).
 8. Negative stock policy: allow or block when online?
 9. Opening stock: will the client supply an Excel list for the first import?
-10. Branding assets: Eminent Jay logo file (SVG/PNG), tagline, receipt footer text, and confirmation of the exact gold shade if the brand already has one.
+10. Branding assets: Eminent Jay logo file (SVG/PNG), tagline, receipt footer text, and confirmation of the official blue and warm yellow shades if the brand already has them.
 11. What exactly does **boutique** include (clothing, shoes, bags, accessories, jewellery)? Which size sets and colours are used?
 12. Final list of **types** under Men, Ladies, and Children. Are Unisex items needed?
 13. Which types have expiry dates or return windows (cosmetics, clothing)?

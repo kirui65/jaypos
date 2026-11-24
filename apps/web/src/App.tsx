@@ -52,6 +52,18 @@ type Catalog = {
 };
 type HeldCart = { id: string; label: string | null; createdAt: string; cartJson: { items: { variantId: string; quantity: number }[] } };
 type CartLine = { product: Product; variant: Variant; quantity: number };
+const APP_ROUTE_TITLES: Record<string, string> = {
+  "/": "Point of sale",
+  "/shift": "My shift",
+  "/sales": "Sales and receipts",
+  "/stock": "Stock lookup",
+  "/refunds": "Returns",
+  "/admin": "Overview",
+  "/admin/catalog": "Catalog",
+  "/admin/staff": "Staff",
+  "/admin/documents": "Receipts & invoices",
+};
+
 function availableUnits(catalog: Catalog | undefined, product: Product, variant: Variant): number {
   const allVariants = catalog?.products.flatMap((row) => row.variants) ?? [];
   if (variant.parentBulkVariantId && variant.mlPerUnit) {
@@ -94,6 +106,30 @@ type Sale = {
     variant: { id: string; sku: string; product: { name: string } };
   }[];
   payments: { id: string; method: string; status: string; mpesaReceipt?: string | null }[];
+};
+type OwnerSummary = {
+  today: {
+    date: string;
+    netRevenueCents: number;
+    profitCents: number;
+    marginPct: number | null;
+    saleCount: number;
+  };
+  days: {
+    date: string;
+    netRevenueCents: number;
+    profitCents: number;
+    marginPct: number | null;
+    saleCount: number;
+  }[];
+};
+type DocumentSettings = {
+  name: string;
+  address: string;
+  phone: string;
+  kraPin: string;
+  receiptFooter: string;
+  invoiceTerms: string;
 };
 const UserContext = createContext<AppUser | null>(null);
 const useUser = () => useContext(UserContext)!;
@@ -305,6 +341,7 @@ const navSections = [
     { to: "/admin", label: "Overview", icon: "layout" as const, permission: "sales.read.all" },
     { to: "/admin/catalog", label: "Catalog", icon: "package" as const, permission: "catalog.manage" },
     { to: "/admin/staff", label: "Staff", icon: "users" as const, permission: "staff.manage" },
+    { to: "/admin/documents", label: "Receipts & invoices", icon: "receipt" as const, permission: "catalog.manage" },
   ]},
 ];
 
@@ -363,6 +400,7 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
       "/refunds": () => queryClient.prefetchQuery({ queryKey: ["refunds"], queryFn: () => api("/refunds") }),
       "/admin/catalog": () => queryClient.prefetchQuery({ queryKey: ["catalog"], queryFn: () => api<Catalog>("/catalog") }),
       "/admin/staff": () => queryClient.prefetchQuery({ queryKey: ["staff"], queryFn: () => api("/auth/staff") }),
+      "/admin/documents": () => queryClient.prefetchQuery({ queryKey: ["document-settings"], queryFn: () => api<{ settings: DocumentSettings }>("/sales/documents/settings") }),
     };
     void requests[path]?.();
   }
@@ -431,7 +469,7 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
           <div className="topbar-title">
             <span className="topbar-brand">{brand.brandName}</span>
             <span aria-hidden="true">/</span>
-            <span className="topbar-role">{user.role === "admin" ? "Admin workspace" : "Staff till"}</span>
+            <span className="topbar-role">{APP_ROUTE_TITLES[location.pathname] ?? (user.role === "admin" ? "Admin workspace" : "Staff till")}</span>
           </div>
           <div className="topbar-right">
             <span className={`connectivity-indicator ${online ? "" : "connectivity-offline"}`} role="status" aria-label={online ? "Online" : "Offline"}>
@@ -480,6 +518,14 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
               element={
                 <RoleGate permission="staff.manage">
                   <StaffAdminPage />
+                </RoleGate>
+              }
+            />
+            <Route
+              path="/admin/documents"
+              element={
+                <RoleGate permission="catalog.manage">
+                  <DocumentSettingsPage />
                 </RoleGate>
               }
             />
@@ -552,10 +598,14 @@ function POSPage() {
   const [holdPending, setHoldPending] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
   const searchRef = useRef<HTMLInputElement>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
   const [method, setMethod] = useState<"cash" | "mpesa_stk" | "split">("cash");
   const [tender, setTender] = useState("");
   const [phone, setPhone] = useState("");
+  const [invoiceBuyerName, setInvoiceBuyerName] = useState("");
+  const [invoiceBuyerPhone, setInvoiceBuyerPhone] = useState("");
+  const [invoiceBuyerEmail, setInvoiceBuyerEmail] = useState("");
   const [activePaymentId, setActivePaymentId] = useState("");
   const [stkInitiated, setStkInitiated] = useState(false);
   const [receiptSale, setReceiptSale] = useState<Sale | null>(null);
@@ -578,6 +628,11 @@ function POSPage() {
   );
   const showTillSkeleton = useDelayedLoading(isPending || shiftPending);
   const total = cart.reduce((sum, line) => sum + line.variant.priceCents * line.quantity, 0);
+  const invoiceDetailsStarted = Boolean(
+    invoiceBuyerName.trim() || invoiceBuyerPhone.trim() || invoiceBuyerEmail.trim(),
+  );
+  const invoiceDetailsValid =
+    !invoiceDetailsStarted || Boolean(invoiceBuyerName.trim() && invoiceBuyerPhone.trim());
   const paymentStatus = useQuery({
     queryKey: ["payment-check", activePaymentId],
     enabled: !!activePaymentId && stkInitiated,
@@ -593,11 +648,13 @@ function POSPage() {
         event.preventDefault();
         searchRef.current?.focus();
       }
-      if (event.key === "Escape") setPayOpen(false);
+      if (event.key === "Escape") {
+        setReviewOpen(false);
+        setPayOpen(false);
+      }
       if (event.ctrlKey && event.key === "Enter" && cart.length) {
         event.preventDefault();
-        setPayOpen(true);
-        setTender(currencyInput(total));
+        setReviewOpen(true);
       }
     }
     window.addEventListener("keydown", handleTillKeys);
@@ -621,6 +678,15 @@ function POSPage() {
         body: JSON.stringify({
           clientUuid: crypto.randomUUID(),
           items: cart.map(({ variant, quantity }) => ({ variantId: variant.id, quantity })),
+          ...(invoiceDetailsValid && invoiceBuyerName.trim() && invoiceBuyerPhone.trim()
+            ? {
+                customerDetails: {
+                  name: invoiceBuyerName.trim(),
+                  phone: invoiceBuyerPhone.trim(),
+                  ...(invoiceBuyerEmail.trim() ? { email: invoiceBuyerEmail.trim() } : {}),
+                },
+              }
+            : {}),
           payments,
         }),
       });
@@ -640,6 +706,9 @@ function POSPage() {
         setCart([]);
         setPayOpen(false);
         setTender("");
+        setInvoiceBuyerName("");
+        setInvoiceBuyerPhone("");
+        setInvoiceBuyerEmail("");
       }
       refresh();
     },
@@ -746,16 +815,23 @@ function POSPage() {
                   onClick={() => addToCart(product, variant)}
                 >
                   <div className={`product-art product-art-${product.productType.code.toLowerCase()}`}>
-                    {product.imageUrl ? (
-                      <ProgressiveImage src={product.imageUrl} alt={`${product.name}`} width={166} height={166} />
-                    ) : (
-                      <span className="product-placeholder">
-                        <span className="placeholder-monogram">EJ</span>
-                        <Icon className="product-type-icon" name={productTypeIcon(product.productType.code)} />
-                        <small>{product.name}</small>
-                      </span>
+                    <span className="product-placeholder" aria-hidden={product.imageUrl ? "true" : undefined}>
+                      <span className="placeholder-monogram">EJ</span>
+                      <Icon className="product-type-icon" name={productTypeIcon(product.productType.code)} />
+                      <small>{product.name}</small>
+                    </span>
+                    {product.imageUrl && (
+                      <ProgressiveImage
+                        src={resolveCatalogImage(product.imageUrl)}
+                        alt={`${product.name}`}
+                        width={240}
+                        height={240}
+                        {...(product.imageUrl.startsWith("/api/")
+                          ? { crossOrigin: "use-credentials" as const }
+                          : {})}
+                      />
                     )}
-                    {available <= 5 && <span className={`stock-badge ${available <= 0 ? "stock-empty" : "stock-low"}`}>{available <= 0 ? "Out of stock" : `${available} left`}</span>}
+                    <span className={`stock-badge ${available <= 0 ? "stock-empty" : available <= 5 ? "stock-low" : ""}`}>{available <= 0 ? "Out of stock" : available <= 5 ? `${available} left` : `${available} in stock`}</span>
                     {inCart > 0 && <span className="product-qty-badge" aria-label={`${inCart} in cart`}>{inCart}</span>}
                   </div>
                   <div className="product-card-body">
@@ -889,8 +965,7 @@ function POSPage() {
             className="button-full button-lg pay-button"
             disabled={!cart.length}
             onClick={() => {
-              setPayOpen(true);
-              setTender(currencyInput(total));
+              setReviewOpen(true);
             }}
           >
             Pay · {money(total)}
@@ -931,6 +1006,78 @@ function POSPage() {
           </div>
         </aside>
       </div>
+      {reviewOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-card cart-review-modal" role="dialog" aria-modal="true" aria-labelledby="cart-review-title">
+            <button className="modal-close" aria-label="Close" onClick={() => setReviewOpen(false)}>
+              <Icon name="x" />
+            </button>
+            <p className="eyebrow">FINAL CHECK</p>
+            <h2 id="cart-review-title">Review your items</h2>
+            <p className="muted">Confirm products and quantities before taking payment.</p>
+            <div className="cart-review-list">
+              {cart.map((line) => (
+                <article className="cart-review-item" key={line.variant.id}>
+                  <div className="cart-review-details">
+                    <b>{line.product.name}</b>
+                    <small>{line.variant.sku} · {money(line.variant.priceCents)} each</small>
+                  </div>
+                  <div className="qty-control">
+                    <button
+                      type="button"
+                      aria-label={`Decrease ${line.product.name} quantity`}
+                      disabled={line.quantity <= 1}
+                      onClick={() => setCart((rows) => rows.map((row) =>
+                        row.variant.id === line.variant.id
+                          ? { ...row, quantity: Math.max(1, row.quantity - 1) }
+                          : row,
+                      ))}
+                    >
+                      <Icon name="minus" />
+                    </button>
+                    <span aria-live="polite">{line.quantity}</span>
+                    <button
+                      type="button"
+                      aria-label={`Increase ${line.product.name} quantity`}
+                      disabled={line.quantity >= availableUnits(catalog, line.product, line.variant)}
+                      onClick={() => addToCart(line.product, line.variant)}
+                    >
+                      <Icon name="plus" />
+                    </button>
+                  </div>
+                  <b className="cart-review-total">{money(line.variant.priceCents * line.quantity)}</b>
+                  <button
+                    type="button"
+                    className="cart-review-remove"
+                    aria-label={`Remove ${line.product.name}`}
+                    onClick={() => setCart((rows) => rows.filter((row) => row.variant.id !== line.variant.id))}
+                  >
+                    <Icon name="x" />
+                  </button>
+                </article>
+              ))}
+              {cart.length === 0 && <p className="muted">Your cart is empty. Add products to continue.</p>}
+            </div>
+            <div className="cart-review-summary">
+              <span>{cart.reduce((sum, line) => sum + line.quantity, 0)} items</span>
+              <b>{money(total)}</b>
+            </div>
+            <div className="action-row cart-review-actions">
+              <button className="button button-secondary" onClick={() => setReviewOpen(false)}>Back to cart</button>
+              <Button
+                disabled={!cart.length}
+                onClick={() => {
+                  setReviewOpen(false);
+                  setPayOpen(true);
+                  setTender(currencyInput(total));
+                }}
+              >
+                Continue to payment
+              </Button>
+            </div>
+          </section>
+        </div>
+      )}
       {payOpen && (
         <div className="modal-backdrop" role="presentation">
           <section
@@ -1027,6 +1174,9 @@ function POSPage() {
                       setPayOpen(false);
                       setActivePaymentId("");
                       setStkInitiated(false);
+                    setInvoiceBuyerName("");
+                    setInvoiceBuyerPhone("");
+                    setInvoiceBuyerEmail("");
                       refresh();
                     }}
                   >
@@ -1044,6 +1194,43 @@ function POSPage() {
                 <p className="muted">
                   Amount due <b>{money(total)}</b>
                 </p>
+                <details className="invoice-details">
+                  <summary>
+                    Invoice details <span>Optional</span>
+                  </summary>
+                  <div className="invoice-details-fields">
+                    <Field label="Customer name">
+                      <input
+                        autoComplete="name"
+                        placeholder="Name on invoice"
+                        value={invoiceBuyerName}
+                        onChange={(event) => setInvoiceBuyerName(event.target.value)}
+                      />
+                    </Field>
+                    <Field label="Customer phone">
+                      <input
+                        autoComplete="tel"
+                        inputMode="tel"
+                        placeholder="0712 345 678"
+                        value={invoiceBuyerPhone}
+                        onChange={(event) => setInvoiceBuyerPhone(event.target.value)}
+                      />
+                    </Field>
+                    <Field label="Customer email">
+                      <input
+                        autoComplete="email"
+                        inputMode="email"
+                        placeholder="name@example.com"
+                        type="email"
+                        value={invoiceBuyerEmail}
+                        onChange={(event) => setInvoiceBuyerEmail(event.target.value)}
+                      />
+                    </Field>
+                    {!invoiceDetailsValid && (
+                      <p className="field-hint">Enter both the customer name and phone, or clear the invoice details.</p>
+                    )}
+                  </div>
+                </details>
                 <div className="payment-methods">
                   <button
                     className={`payment-method ${method === "cash" ? "payment-method-active" : ""}`}
@@ -1120,6 +1307,7 @@ function POSPage() {
             loading={saleMutation.isPending}
                   disabled={
                     (method === "cash" && cents(tender) < total) ||
+                    !invoiceDetailsValid ||
                     (method === "mpesa_stk" && !phone.trim()) ||
                     (method === "split" &&
                       (cents(tender) <= 0 ||
@@ -1179,6 +1367,83 @@ async function printReceipt(saleId: string, format: "html" | "pdf" = "html") {
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function resolveCatalogImage(imageUrl: string) {
+  if (!imageUrl.startsWith("/api/")) return imageUrl;
+  const base = (import.meta.env.VITE_API_URL ?? "http://localhost:3001").replace(/\/$/, "");
+  return `${base}${imageUrl}`;
+}
+
+async function printInvoice(saleId: string) {
+  const base = (import.meta.env.VITE_API_URL ?? "http://localhost:3001").replace(/\/$/, "");
+  const preview = window.open(`${base}/api/sales/${saleId}/invoice?format=html`, "_blank");
+  if (!preview) throw new Error("Allow pop-ups to preview the invoice");
+  preview.opener = null;
+}
+
+async function downloadInvoice(saleId: string) {
+  const base = (import.meta.env.VITE_API_URL ?? "http://localhost:3001").replace(/\/$/, "");
+  const response = await fetch(`${base}/api/sales/${saleId}/invoice?format=pdf&download=1`, {
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error("Could not generate invoice PDF");
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `invoice-${saleId.slice(0, 8)}.pdf`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+async function downloadOwnerReport() {
+  const base = (import.meta.env.VITE_API_URL ?? "http://localhost:3001").replace(/\/$/, "");
+  const response = await fetch(`${base}/api/sales/reports/owner-summary.pdf`, {
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error("Could not generate the owner report");
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "owner-profitability-report.pdf";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+async function encodeProductImage(file: File) {
+  if (!file.type.startsWith("image/")) throw new Error("Choose an image file.");
+  if (file.size > 12 * 1024 * 1024) throw new Error("Choose a photo smaller than 12 MB.");
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 600 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) {
+    bitmap.close();
+    throw new Error("Photo editing is not supported in this browser.");
+  }
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const compressed = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, "image/webp", 0.78),
+  );
+  if (!compressed) throw new Error("Could not prepare this photo.");
+  if (compressed.size > 200_000)
+    throw new Error("This photo is still too large. Choose a smaller image.");
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read this photo."));
+    reader.onload = () =>
+      typeof reader.result === "string"
+        ? resolve(reader.result)
+        : reject(new Error("Could not read this photo."));
+    reader.readAsDataURL(compressed);
+  });
 }
 
 function ShiftPage() {
@@ -1447,9 +1712,13 @@ function SalesPage() {
   const [saleItemId, setSaleItemId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [feedback, setFeedback] = useState("");
+  const [page, setPage] = useState(1);
   const { data, isPending, error } = useQuery({
-    queryKey: ["sales", user.role],
-    queryFn: () => api<{ sales: Sale[] }>(`/sales${user.role === "admin" ? "?scope=all" : ""}`),
+    queryKey: ["sales", user.role, page],
+    queryFn: () =>
+      api<{ sales: Sale[]; page: number; pageSize: number }>(
+        `/sales?${user.role === "admin" ? "scope=all&" : ""}page=${page}&pageSize=100`,
+      ),
   });
   const showLoading = useDelayedLoading(isPending);
   const request = useMutation({
@@ -1475,7 +1744,7 @@ function SalesPage() {
       <PageHeader
         eyebrow="TRANSACTIONS"
         title="Sales & receipts"
-        detail="Review recent sales, request a return, or print a receipt."
+        detail="Review transactions, preview receipts and invoices, or manage a return."
       />
       {feedback && <Notice tone="success">{feedback}</Notice>}
       {error && <FormError value={error} />}
@@ -1495,7 +1764,7 @@ function SalesPage() {
                 className="text-button"
                 onClick={() => void printReceipt(sale.id).catch((e) => setFeedback(e.message))}
               >
-                Print
+                Preview receipt
               </button>
               <button
                 className="text-button"
@@ -1505,6 +1774,26 @@ function SalesPage() {
               >
                 PDF
               </button>
+              {sale.status === "completed" ||
+              sale.status === "partially_refunded" ||
+              sale.status === "refunded" ? (
+                <button
+                  className="text-button"
+                  onClick={() => void printInvoice(sale.id).catch((e) => setFeedback(e.message))}
+                >
+                  Preview invoice
+                </button>
+              ) : null}
+              {sale.status === "completed" ||
+              sale.status === "partially_refunded" ||
+              sale.status === "refunded" ? (
+                <button
+                  className="text-button"
+                  onClick={() => void downloadInvoice(sale.id).catch((e) => setFeedback(e.message))}
+                >
+                  Invoice PDF
+                </button>
+              ) : null}
               {sale.status === "completed" || sale.status === "partially_refunded" ? (
                 <button
                   className="text-button"
@@ -1519,6 +1808,25 @@ function SalesPage() {
             </div>,
           ])}
         />
+        <div className="table-pagination">
+          <span>
+            Page {page} · {data?.sales.length ?? 0} records shown
+          </span>
+          <div className="action-row">
+            <button
+              disabled={page <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+            >
+              Previous
+            </button>
+            <button
+              disabled={(data?.sales.length ?? 0) < 100}
+              onClick={() => setPage((current) => current + 1)}
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </section>
       {selected && (
         <div className="modal-backdrop">
@@ -1915,6 +2223,12 @@ function RefundsPage() {
 }
 
 function DashboardPage() {
+  const [reportPending, setReportPending] = useState(false);
+  const [reportError, setReportError] = useState("");
+  const { data: summary } = useQuery({
+    queryKey: ["owner-summary"],
+    queryFn: () => api<OwnerSummary>("/sales/reports/owner-summary"),
+  });
   const { data: sales } = useQuery({
     queryKey: ["sales", "all"],
     queryFn: () => api<{ sales: Sale[] }>("/sales?scope=all"),
@@ -1928,20 +2242,11 @@ function DashboardPage() {
     queryKey: ["pending-payments"],
     queryFn: () => api<{ payments: { id: string }[] }>("/payments/pending?scope=all"),
   });
-  const todaySales =
-    sales?.sales.filter(
-      (sale) => new Date(sale.createdAt).toDateString() === new Date().toDateString(),
-    ) ?? [];
-  const revenue = todaySales.reduce((sum, sale) => sum + sale.totalCents, 0);
-  const days = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setHours(0, 0, 0, 0);
-    date.setDate(date.getDate() - (6 - index));
-    const valueCents = (sales?.sales ?? [])
-      .filter((sale) => new Date(sale.createdAt).toDateString() === date.toDateString())
-      .reduce((sum, sale) => sum + sale.totalCents, 0);
-    return { date, valueCents };
-  });
+  const today = summary?.today;
+  const days = (summary?.days ?? []).map((day) => ({
+    date: new Date(`${day.date}T00:00:00+03:00`),
+    valueCents: day.netRevenueCents,
+  }));
   const peak = Math.max(1, ...days.map((day) => day.valueCents));
   return (
     <>
@@ -1949,17 +2254,52 @@ function DashboardPage() {
         eyebrow="OWNER VIEW"
         title="Good day"
         detail="A quick overview of today's shop activity."
+        action={
+          <Button
+            loading={reportPending}
+            onClick={async () => {
+              setReportPending(true);
+              setReportError("");
+              try {
+                await downloadOwnerReport();
+              } catch (error) {
+                setReportError(error instanceof Error ? error.message : "Could not generate report");
+              } finally {
+                setReportPending(false);
+              }
+            }}
+          >
+            Download report PDF
+          </Button>
+        }
       />
-      <section className="metric-grid">
+      {reportError && <Notice tone="error">{reportError}</Notice>}
+      <section className="metric-grid metric-grid-three">
         <Metric
           label="Sales today"
-          value={money(revenue)}
-          detail={`${todaySales.length} completed sales`}
+          value={money(today?.netRevenueCents ?? 0)}
+          detail={`${today?.saleCount ?? 0} completed sales, after refunds`}
+        />
+        <Metric
+          label="Gross profit today"
+          value={money(today?.profitCents ?? 0)}
+          detail="After approved refunds and restocks"
+        />
+        <Metric
+          label="Gross margin today"
+          value={
+            today?.marginPct === null || today?.marginPct === undefined
+              ? "—"
+              : `${today.marginPct}%`
+          }
+          detail="Gross profit ÷ net sales"
         />
         <Metric
           label="Average basket"
-          value={money(todaySales.length ? Math.round(revenue / todaySales.length) : 0)}
-          detail="Today's average sale"
+          value={money(
+            today?.saleCount ? Math.round((today.netRevenueCents ?? 0) / today.saleCount) : 0,
+          )}
+          detail="Today's net sales per sale"
         />
         <Metric
           label="Low stock"
@@ -1976,7 +2316,7 @@ function DashboardPage() {
         <div className="section-title-row">
           <div>
             <h2>Sales this week</h2>
-            <p className="muted">Completed sales by day</p>
+            <p className="muted">Net sales by day · after approved refunds</p>
           </div>
           <span className="chart-legend">
             <span /> KES
@@ -1997,16 +2337,27 @@ function DashboardPage() {
               <div className="chart-track">
                 <span
                   className={
-                    day.date.toDateString() === new Date().toDateString()
+                    day.date === days[days.length - 1]?.date
                       ? "chart-bar chart-bar-today"
                       : "chart-bar"
                   }
                   style={{
-                    height: `${Math.max(day.valueCents ? 8 : 0, Math.round((day.valueCents / peak) * 100))}%`,
+                    height: `${
+                      day.valueCents > 0
+                        ? Math.max(8, Math.round((day.valueCents / peak) * 100))
+                        : 0
+                    }%`,
                   }}
                 />
               </div>
-              <small>{shopDate(day.date, { weekday: "short", month: undefined, day: undefined, dateStyle: undefined })}</small>
+              <small>
+                {shopDate(day.date, {
+                  weekday: "short",
+                  month: undefined,
+                  day: undefined,
+                  dateStyle: undefined,
+                })}
+              </small>
             </div>
           ))}
         </div>
@@ -2238,6 +2589,127 @@ function StaffAdminPage() {
   );
 }
 
+function DocumentSettingsPage() {
+  const client = useQueryClient();
+  const { data, isPending, error } = useQuery({
+    queryKey: ["document-settings"],
+    queryFn: () => api<{ settings: DocumentSettings }>("/sales/documents/settings"),
+  });
+  const [form, setForm] = useState<DocumentSettings | null>(null);
+  const preview = form ?? data?.settings;
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    if (data) setForm(data.settings);
+  }, [data]);
+  const save = useMutation({
+    mutationFn: () =>
+      api("/sales/documents/settings", {
+        method: "PATCH",
+        body: JSON.stringify(form),
+      }),
+    onSuccess: () => {
+      setMessage("Receipt and invoice settings saved.");
+      void client.invalidateQueries({ queryKey: ["document-settings"] });
+      void client.invalidateQueries({ queryKey: ["brand"] });
+    },
+  });
+  const update = <K extends keyof DocumentSettings>(key: K, value: DocumentSettings[K]) => {
+    setForm((current) => (current ? { ...current, [key]: value } : current));
+  };
+  if (isPending) return <FormSkeleton />;
+  return (
+    <>
+      <PageHeader
+        eyebrow="DOCUMENTS"
+        title="Receipts & invoices"
+        detail="Edit the shop details and reusable text printed on receipts and invoices."
+      />
+      {message && <Notice tone="success">{message}</Notice>}
+      {error && <FormError value={error} />}
+      <FormError value={save.error} />
+      <section className="surface form-surface document-settings-surface">
+        <form
+          className="catalog-form"
+          inert={save.isPending || undefined}
+          onSubmit={(event) => {
+            event.preventDefault();
+            save.mutate();
+          }}
+        >
+          <Field label="Business name">
+            <input value={form?.name ?? ""} onChange={(event) => update("name", event.target.value)} required />
+          </Field>
+          <Field label="Business phone">
+            <input value={form?.phone ?? ""} onChange={(event) => update("phone", event.target.value)} />
+          </Field>
+          <Field label="Business address">
+            <textarea rows={2} value={form?.address ?? ""} onChange={(event) => update("address", event.target.value)} />
+          </Field>
+          <Field label="Business PIN">
+            <input value={form?.kraPin ?? ""} onChange={(event) => update("kraPin", event.target.value)} />
+          </Field>
+          <Field label="Receipt footer" hint="Short message printed at the bottom of receipts.">
+            <textarea rows={3} maxLength={300} value={form?.receiptFooter ?? ""} onChange={(event) => update("receiptFooter", event.target.value)} />
+          </Field>
+          <Field label="Invoice terms or notes" hint="This text appears on sales invoice PDFs.">
+            <textarea rows={3} maxLength={800} value={form?.invoiceTerms ?? ""} onChange={(event) => update("invoiceTerms", event.target.value)} />
+          </Field>
+          <p className="document-settings-note">
+            Printed totals, products, and quantities always come from the saved sale. Updating these settings changes the document header and reusable text.
+          </p>
+          <div className="catalog-submit">
+            <Button loading={save.isPending} disabled={!form}>Save document settings</Button>
+          </div>
+        </form>
+      </section>
+      <section className="document-preview-grid section-spaced" aria-label="Live document previews">
+        <article className="surface document-preview-card">
+          <div className="section-title-row">
+            <div>
+              <span className="eyebrow">THERMAL RECEIPT</span>
+              <h2>Receipt preview</h2>
+            </div>
+            <span className="preview-size-label">80 mm</span>
+          </div>
+          <div className="receipt-preview-paper">
+            <b>{preview?.name || "Your business name"}</b>
+            <small>{preview?.address || "Business address"}</small>
+            <small>{preview?.phone || "Business phone"}</small>
+            {preview?.kraPin && <small>PIN: {preview.kraPin}</small>}
+            <hr />
+            <div className="preview-receipt-row"><span>Receipt</span><span>EJ-000042</span></div>
+            <div className="preview-receipt-row"><span>Amber Woods Eau de Parfum × 1</span><span>Ksh 8,500.00</span></div>
+            <hr />
+            <div className="preview-receipt-row preview-receipt-total"><span>Total</span><span>Ksh 8,500.00</span></div>
+            <small className="preview-receipt-footer">{preview?.receiptFooter || "Receipt footer message"}</small>
+          </div>
+        </article>
+        <article className="surface document-preview-card">
+          <div className="section-title-row">
+            <div>
+              <span className="eyebrow">A4 SALES DOCUMENT</span>
+              <h2>Invoice preview</h2>
+            </div>
+            <span className="preview-size-label">A4</span>
+          </div>
+          <div className="invoice-preview-paper">
+            <header className="invoice-preview-head">
+              <div><b>{preview?.name || "Your business name"}</b><small>{preview?.address || "Business address"}</small><small>{preview?.phone || "Business phone"}</small></div>
+              <div><strong>INVOICE</strong><small>INV-EJ-000042</small><small>24 Nov 2026</small></div>
+            </header>
+            {preview?.kraPin && <small className="invoice-preview-pin">Business PIN: {preview.kraPin}</small>}
+            <div className="invoice-preview-customer"><small>BILLED TO</small><b>Walk-in customer</b></div>
+            <div className="invoice-preview-line"><b>Amber Woods Eau de Parfum</b><span>1 × Ksh 8,500.00</span><strong>Ksh 8,500.00</strong></div>
+            <div className="invoice-preview-totals"><span>Total</span><b>Ksh 8,500.00</b></div>
+            <p className="invoice-preview-terms">{preview?.invoiceTerms || "Invoice terms and notes appear here."}</p>
+            <p className="invoice-preview-footer">{preview?.receiptFooter || "Receipt footer message"}</p>
+          </div>
+        </article>
+      </section>
+    </>
+  );
+}
+
 function CatalogAdminPage() {
   const { data, isPending } = useQuery({
     queryKey: ["catalog"],
@@ -2249,6 +2721,10 @@ function CatalogAdminPage() {
   const [productTypeId, setProductTypeId] = useState("");
   const [brandId, setBrandId] = useState("");
   const [name, setName] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [imageError, setImageError] = useState("");
+  const imageFileInput = useRef<HTMLInputElement>(null);
+  const cameraFileInput = useRef<HTMLInputElement>(null);
   const [sku, setSku] = useState("");
   const [price, setPrice] = useState("");
   const [cost, setCost] = useState("");
@@ -2264,6 +2740,7 @@ function CatalogAdminPage() {
           productTypeId,
           brandId: brandId || null,
           name,
+          imageUrl: imageUrl.trim() || null,
           attributes: {},
           variants: [
             {
@@ -2303,6 +2780,8 @@ function CatalogAdminPage() {
     onSuccess: () => {
       setMessage("Product and opening stock created.");
       setName("");
+      setImageUrl("");
+      setImageError("");
       setSku("");
       setPrice("");
       setCost("");
@@ -2333,6 +2812,75 @@ function CatalogAdminPage() {
           <Field label="Product name">
             <input value={name} onChange={(e) => setName(e.target.value)} required />
           </Field>
+          <Field label="Product picture URL" hint="Use a direct link to a publicly accessible product photo.">
+            <input
+              autoComplete="url"
+              inputMode="url"
+              placeholder="https://example.com/product.jpg"
+              type="url"
+              value={imageUrl.startsWith("data:") ? "" : imageUrl}
+              onChange={(e) => {
+                setImageUrl(e.target.value);
+                setImageError("");
+              }}
+            />
+          </Field>
+          <div className="catalog-photo-controls">
+            <span>Add a product photo</span>
+            <div className="action-row">
+              <button type="button" className="button button-secondary" onClick={() => imageFileInput.current?.click()}>
+                Upload photo
+              </button>
+              <button type="button" className="button button-secondary" onClick={() => cameraFileInput.current?.click()}>
+                Take photo
+              </button>
+            </div>
+            <input
+              ref={imageFileInput}
+              className="photo-file-input"
+              type="file"
+              accept="image/*"
+              aria-label="Upload product photo"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (!file) return;
+                void encodeProductImage(file).then(setImageUrl).catch((error) => {
+                  setImageError(error instanceof Error ? error.message : "Could not process photo");
+                });
+              }}
+            />
+            <input
+              ref={cameraFileInput}
+              className="photo-file-input"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              aria-label="Take product photo with camera"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (!file) return;
+                void encodeProductImage(file).then(setImageUrl).catch((error) => {
+                  setImageError(error instanceof Error ? error.message : "Could not process photo");
+                });
+              }}
+            />
+            {imageError && <p className="field-hint">{imageError}</p>}
+            {imageUrl && (
+              <div className="catalog-image-preview">
+                <span>Photo preview</span>
+                <ProgressiveImage
+                  className="product-photo-preview"
+                  src={imageUrl}
+                  alt={`${name || "Product"} preview`}
+                  width={240}
+                  height={240}
+                />
+                <button type="button" className="text-button" onClick={() => setImageUrl("")}>Remove photo</button>
+              </div>
+            )}
+          </div>
           <Field label="SKU">
             <input value={sku} onChange={(e) => setSku(e.target.value)} required />
           </Field>
@@ -2443,10 +2991,14 @@ function DesignPage() {
             {[
               "black",
               "charcoal",
-              "gold",
-              "gold-soft",
-              "gold-deep",
-              "gold-wash",
+              "blue",
+              "blue-soft",
+              "blue-deep",
+              "blue-wash",
+              "yellow",
+              "yellow-soft",
+              "yellow-deep",
+              "yellow-wash",
               "paper",
               "muted",
               "success",
@@ -2514,18 +3066,8 @@ export default function App() {
     staleTime: 60_000,
   });
   useEffect(() => {
-    const routeTitles: Record<string, string> = {
-      "/": "Point of sale",
-      "/shift": "My shift",
-      "/sales": "Sales and receipts",
-      "/stock": "Stock lookup",
-      "/refunds": "Returns",
-      "/admin": "Overview",
-      "/admin/catalog": "Catalog",
-      "/admin/staff": "Staff",
-    };
     const route = location.pathname;
-    document.title = `${routeTitles[route] ?? "Page not found"} | ${brandSettings.brandName}`;
+    document.title = `${APP_ROUTE_TITLES[route] ?? "Page not found"} | ${brandSettings.brandName}`;
   }, [location.pathname, brandSettings.brandName]);
   if (import.meta.env.DEV && window.location.pathname === "/design") return <DesignPage />;
   if (isPending) return <div className="app-loading auth-bootstrap-reserve" aria-hidden="true"><span className="skeleton auth-bootstrap-mark" /><span className="skeleton auth-bootstrap-line" /></div>;

@@ -92,7 +92,7 @@ scan warn "Hard-coded rgb/hsl colours (use tokens)"            '(rgba?|hsla?)\('
 scan warn "Arbitrary Tailwind values like w-[13px]"            '\b[a-z-]+-\[-?[0-9.]+(px|rem|em|%)\]'
 scan warn "Default Tailwind palette colours (use ej tokens)"   '\b(bg|text|border|ring|from|to|via|fill|stroke|divide|outline)-(slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]{2,3}\b'
 scan fail "Purple/pink/blue gradients (classic AI-template look)" '(from|via|to)-(indigo|violet|purple|fuchsia|pink|blue|sky|cyan)-[0-9]{2,3}'
-scan warn "Gradients (gold budget: keep them rare and subtle)"  'bg-gradient-to-|linear-gradient\('
+scan warn "Gradients (brand budget: keep them rare and subtle)"  'bg-gradient-to-|linear-gradient\('
 scan fail "Emoji used in the UI (use the icon set)"            '[\x{1F300}-\x{1FAFF}]' P
 scan warn "Arrow/dingbat symbols used as icons"                '[\x{2190}-\x{21FF}\x{2600}-\x{27BF}]' P
 scan fail "External font/CDN links (self-host fonts)"          'fonts\.googleapis|fonts\.gstatic|unpkg\.com|cdnjs|jsdelivr'
@@ -282,7 +282,7 @@ if [ "$FAIL" -eq 0 ]; then echo "  Result: no blocking problems"; else echo "  R
 cat <<'EYE'
 
   Eye test (a script cannot judge taste, so do this yourself with the screenshots):
-   1. Squint at each screenshot: is it obvious where to look first, and is there only one gold button?
+   1. Squint at each screenshot: is it obvious where to look first, and is the blue primary action clear?
    2. Do all cards share the same padding, radius, and header style?
    3. Are money columns aligned right with the same number format everywhere?
    4. Does every screen have good loading, empty, and error states?
