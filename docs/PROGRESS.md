@@ -2,6 +2,33 @@
 
 Last updated: 2026-11-23
 
+## Supabase integration handoff (2026-11-23)
+
+- Installed and authenticated the Supabase CLI v3.3.0. The checkout is linked to the owner's active hosted project (`himlzgngxdexksnjycno`); `supabase projects list` confirms it is healthy and linked.
+- Added `supabase/config.toml` for repeatable CLI project config. Prisma remains the only migration source; Supabase CLI migrations are disabled in the config to avoid a second schema history.
+- Added `docs/SUPABASE.md` with setup, connection, migration, auth, storage, and Data API security guidance. Updated `.env.example` with Supavisor transaction/session pooler formats and TLS settings.
+- Added Prisma migration `20261123180000_supabase_api_lockdown` to enable RLS and revoke Data API role grants on all POS tables. The API keeps using its private PostgreSQL connection and enforces app permissions.
+- `corepack pnpm build` — passed. Prisma schema validation — passed. Docker is unavailable, so an isolated PostgreSQL 16 cluster was started under `/tmp` for local preview. The ignored local `.env` points to this local database; all Prisma migrations and the sample seed completed there. Supabase connection strings/password are still absent, so hosted migrations and seed remain unapplied.
+- Fixed API workspace scripts to load the repo-root `.env` using `DOTENV_CONFIG_PATH`/`dotenv/config`; `dev`, Prisma generate/migrate, and seed commands now use the documented root env file.
+- Local preview is running at `http://localhost:5173/` with API health at `http://localhost:3001/health`. Local admin and cashier demo accounts were created and both login requests returned HTTP 200. Their temporary passwords are intentionally not stored in this handoff.
+- Supabase Auth, Storage, and Realtime are not wired into the app: Phase 1's source of truth requires Express sessions/roles, and there is no image upload feature. Do not expose Supabase service credentials in the web app.
+
+## UI audit handoff (2026-11-23)
+
+The requested UI audit/craft pass is in progress. Do not treat the mobile Lighthouse checks as passing yet.
+
+- Audit entry point is now `scripts/audit.sh`; the browser spec is `apps/web/e2e/ui-audit.spec.ts`. The original root-level `audit.sh` and `ui-audit.spec.ts` were present as untracked files at session start and were left untouched.
+- Read `docs/UI_CHANGELOG.md` and `docs/UI_DECISIONS.md` for changes and intentional/environment-dependent warnings.
+- Design tokens now live in `apps/web/src/tokens.css`. POS cards expose `data-testid="product-card"` and cart lines expose `data-testid="cart-line"`.
+- Browser audit dependencies `@playwright/test`, `@axe-core/playwright`, and `lighthouse` were added to root devDependencies. Chromium was installed in the local Playwright cache.
+- `bash scripts/audit.sh` after the latest performance changes completed with typecheck, lint, tests, build, static UI checks, desktop Lighthouse, and Playwright/axe passing. Mobile performance is 72 (minimum 85) and TBT 1,966 ms (maximum 200 ms), so both mobile checks still fail. Mobile LCP is 870 ms and CLS is 0.000; desktop performance is 100. The browser E2E run passed and saved phone/tablet/desktop public login screenshots. The audit needed local port access and was run with approval.
+- Remaining WARNs: the dashboard chart's data-driven inline height (documented as intentional), API load check skipped because no API service is configured, and logged-in admin/staff audits skipped because no database/API credentials are configured.
+- Screenshot files are in `audit/screenshots/`. `before-*` are from the audit immediately before the last mobile performance optimization; `public-*-home.png` are the most recent after screenshots.
+- The app now serves the login as semantic static HTML with a small native fetch bootstrap. React is dynamically imported only when a session exists or login succeeds, and `/sw.js` is registered after authentication. The Noto Sans preload was removed. Latest mobile run shows 301 ms script evaluation, but TBT rose to 1,966 ms with large style/layout and unattributed tasks; score is 72. The run before the static login change scored 76 with TBT 1,075 ms, so results remain variable and both mobile targets are unpassed. Latest report: `audit/lh-mobile.json`.
+- The PWA virtual registration import was tried and rejected because the build lacked its `workbox-window` runtime dependency. The final implementation uses native `navigator.serviceWorker.register`; direct native registration has been verified by production build and the audit's browser checks.
+
+Resume by reading this handoff and the UI docs, then inspect the remaining style/layout and unattributed long tasks in Lighthouse's trace. Run `bash scripts/audit.sh` after each performance change. Preserve the current screenshots and unrelated pre-existing working-tree edits. Do not claim zero FAILs until mobile Lighthouse performance and TBT pass.
+
 ## Current state
 
 - **Approved scope:** Phase 1, milestones M1–M8 are implemented. The existing approval covers the planned milestones; do not restart at M1.

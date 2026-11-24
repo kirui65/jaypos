@@ -9,6 +9,7 @@ import { shiftsRouter } from "./shifts/routes.js";
 import { createLipwaCallbackRouter, createPaymentsRouter } from "./payments/routes.js";
 import { getPaymentProvider } from "./payments/provider.js";
 import { refundsRouter } from "./refunds/routes.js";
+import { prisma } from "./db.js";
 
 const healthResponseSchema = z.object({
   status: z.literal("ok"),
@@ -28,15 +29,16 @@ export function createApp() {
   app.use((request, response, next) => {
     const origin = request.get("origin");
     const expectedOrigin = process.env.WEB_ORIGIN ?? "http://localhost:5173";
-    if (origin === expectedOrigin) {
-      response.setHeader("Access-Control-Allow-Origin", expectedOrigin);
+    const allowedOrigins = [expectedOrigin, ...(process.env.NODE_ENV === "production" ? [] : ["http://localhost:4173", "http://127.0.0.1:4173"])];
+    if (origin && allowedOrigins.includes(origin)) {
+      response.setHeader("Access-Control-Allow-Origin", origin);
       response.setHeader("Access-Control-Allow-Credentials", "true");
       response.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
       response.setHeader("Access-Control-Allow-Headers", "Content-Type");
       response.setHeader("Vary", "Origin");
     }
     if (request.method === "OPTIONS") {
-      if (origin !== expectedOrigin) return response.status(403).end();
+      if (!origin || !allowedOrigins.includes(origin)) return response.status(403).end();
       return response.status(204).end();
     }
     next();
@@ -45,13 +47,25 @@ export function createApp() {
     if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return next();
     const origin = request.get("origin");
     const expectedOrigin = process.env.WEB_ORIGIN ?? "http://localhost:5173";
-    if (origin && origin !== expectedOrigin)
+    const allowedOrigins = [expectedOrigin, ...(process.env.NODE_ENV === "production" ? [] : ["http://localhost:4173", "http://127.0.0.1:4173"])];
+    if (origin && !allowedOrigins.includes(origin))
       return response.status(403).json({ error: "Origin not allowed" });
     next();
   });
   app.use(express.json({ limit: "1mb" }));
   app.get("/health", (_request, response) => {
     response.json(healthResponseSchema.parse({ status: "ok", service: "eminent-jay-api" }));
+  });
+  app.get("/api/brand", async (_request, response) => {
+    const shop = await prisma.shop.findFirst({ select: { name: true, logoUrl: true, settingsJson: true } });
+    const settings = shop?.settingsJson && typeof shop.settingsJson === "object" && !Array.isArray(shop.settingsJson)
+      ? shop.settingsJson as Record<string, unknown>
+      : {};
+    response.setHeader("Cache-Control", "public, max-age=60");
+    return response.json({
+      brandName: typeof settings.brand_name === "string" ? settings.brand_name : shop?.name ?? "Shop",
+      logoUrl: typeof settings.logo_url === "string" ? settings.logo_url : shop?.logoUrl ?? null,
+    });
   });
   app.use("/api/auth", authRouter);
   const paymentProvider = getPaymentProvider();

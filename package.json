@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "corepack pnpm --filter @eminent/shared build && corepack pnpm --parallel --filter @eminent/api --filter @eminent/web dev",
     "build": "corepack pnpm --recursive --if-present build",
-    "test": "vitest run",
+    "test": "vitest run apps/api/tests packages/shared/src",
     "lint": "eslint .",
     "typecheck": "corepack pnpm --filter @eminent/shared build && corepack pnpm --recursive --if-present typecheck",
     "format": "prettier --write .",
@@ -19,8 +19,11 @@
     "db:seed": "corepack pnpm --filter @eminent/api db:seed"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@eslint/js": "^9.19.0",
+    "@playwright/test": "^1.65.1",
     "eslint": "^9.19.0",
+    "lighthouse": "^13.6.0",
     "prettier": "^3.5.0",
     "typescript": "~5.7.3",
     "typescript-eslint": "^8.24.0",

@@ -31,6 +31,30 @@ export function money(amountCents: number): string {
   }).format(amountCents / 100);
 }
 
+export function shopDateTime(value: string | Date): string {
+  return new Intl.DateTimeFormat("en-KE", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Africa/Nairobi",
+  }).format(value instanceof Date ? value : new Date(value));
+}
+
+export function shopTime(value: string | Date): string {
+  return new Intl.DateTimeFormat("en-KE", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Africa/Nairobi",
+  }).format(value instanceof Date ? value : new Date(value));
+}
+
+export function shopDate(value: string | Date, options: Intl.DateTimeFormatOptions = {}): string {
+  return new Intl.DateTimeFormat("en-KE", {
+    dateStyle: "medium",
+    timeZone: "Africa/Nairobi",
+    ...options,
+  }).format(value instanceof Date ? value : new Date(value));
+}
+
 export function currencyInput(amountCents: number): string {
   return (amountCents / 100).toFixed(2);
 }

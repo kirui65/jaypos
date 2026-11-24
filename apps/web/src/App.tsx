@@ -1,9 +1,9 @@
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { Link, NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import { Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { APP_NAME } from "@eminent/shared";
-import { api, cents, currencyInput, money } from "./api.js";
+import { api, cents, currencyInput, money, shopDate, shopDateTime, shopTime } from "./api.js";
+import { Icon } from "./Icons.js";
 
 type AppUser = {
   id: string;
@@ -15,6 +15,7 @@ type AppUser = {
   discountLimitPct: number;
   active?: boolean;
 };
+type BrandSettings = { brandName: string; logoUrl: string | null };
 type Variant = {
   id: string;
   sku: string;
@@ -145,8 +146,7 @@ function Notice({
 function Loading({ label = "Loading" }: { label?: string }) {
   return (
     <div className="loading" aria-live="polite">
-      <span className="spinner" />
-      {label}
+      <span>{label}</span>
     </div>
   );
 }
@@ -171,7 +171,7 @@ function FormError({ value }: { value: unknown }) {
   return value instanceof Error ? <Notice tone="error">{value.message}</Notice> : null;
 }
 
-function LoginPage({ onLogin }: { onLogin: (user: AppUser) => void }) {
+function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: AppUser) => void }) {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const mutation = useMutation({
@@ -188,12 +188,11 @@ function LoginPage({ onLogin }: { onLogin: (user: AppUser) => void }) {
   }
   return (
     <main className="login-page">
+      <section className="login-brand-panel">{brand.logoUrl && <img className="login-logo" src={brand.logoUrl} alt={`${brand.brandName} logo`} width={220} height={220} />}<div className="gold-rule" /><p>{brand.brandName}</p></section>
       <section className="login-card">
-        <div className="wordmark wordmark-light">{APP_NAME}</div>
-        <div className="gold-rule" />
         <p className="login-kicker">RETAIL POINT OF SALE</p>
-        <h1>Welcome back</h1>
-        <p className="muted">Sign in to open your Eminent Jay till.</p>
+        <h1>Sign in to the till</h1>
+        <p className="muted">Sign in to open your {brand.brandName} till.</p>
         <form onSubmit={submit} className="stack-form">
           <Field label="Username or email">
             <input
@@ -223,7 +222,7 @@ function LoginPage({ onLogin }: { onLogin: (user: AppUser) => void }) {
   );
 }
 
-function PasswordChange({ onDone }: { onDone: () => void }) {
+function PasswordChange({ brand, onDone }: { brand: BrandSettings; onDone: () => void }) {
   const [currentPassword, setCurrent] = useState("");
   const [newPassword, setNext] = useState("");
   const mutation = useMutation({
@@ -236,8 +235,8 @@ function PasswordChange({ onDone }: { onDone: () => void }) {
   });
   return (
     <main className="login-page">
+      <section className="login-brand-panel">{brand.logoUrl && <img className="login-logo" src={brand.logoUrl} alt={`${brand.brandName} logo`} width={220} height={220} />}<div className="gold-rule" /><p>{brand.brandName}</p></section>
       <section className="login-card">
-        <div className="wordmark wordmark-light">{APP_NAME}</div>
         <h1>Set a new password</h1>
         <p className="muted">Use at least 12 characters to secure your account.</p>
         <form
@@ -273,47 +272,99 @@ function PasswordChange({ onDone }: { onDone: () => void }) {
   );
 }
 
-const navItems = [
-  { to: "/", label: "Point of sale", glyph: "▦", permission: "sales.create" },
-  { to: "/shift", label: "My shift", glyph: "◷", permission: "sales.create" },
-  { to: "/sales", label: "Sales & receipts", glyph: "▤", permission: "sales.read.own" },
-  { to: "/stock", label: "Stock lookup", glyph: "▣", permission: "stock.read" },
-  { to: "/refunds", label: "Returns", glyph: "↩", permission: "refunds.request" },
-  { to: "/admin", label: "Overview", glyph: "⌂", permission: "sales.read.all" },
-  { to: "/admin/catalog", label: "Catalog", glyph: "◫", permission: "catalog.manage" },
-  { to: "/admin/staff", label: "Staff", glyph: "♙", permission: "staff.manage" },
+const navSections = [
+  { label: "Sell", items: [
+    { to: "/", label: "Point of sale", icon: "cart" as const, permission: "sales.create" },
+    { to: "/shift", label: "My shift", icon: "clock" as const, permission: "sales.create" },
+    { to: "/sales", label: "Sales and receipts", icon: "receipt" as const, permission: "sales.read.own" },
+    { to: "/stock", label: "Stock lookup", icon: "boxes" as const, permission: "stock.read" },
+    { to: "/refunds", label: "Returns", icon: "rotate" as const, permission: "refunds.request" },
+  ]},
+  { label: "Manage", items: [
+    { to: "/admin", label: "Overview", icon: "layout" as const, permission: "sales.read.all" },
+    { to: "/admin/catalog", label: "Catalog", icon: "package" as const, permission: "catalog.manage" },
+    { to: "/admin/staff", label: "Staff", icon: "users" as const, permission: "staff.manage" },
+  ]},
 ];
 
-function AppShell({ onLogout }: { onLogout: () => void }) {
+function PageNotFound() {
+  return (
+    <section className="access-denied">
+      <p className="eyebrow">404</p>
+      <h1>Page not found</h1>
+      <p>This page is not available in this workspace.</p>
+      <Link className="button" to="/">
+        Return to point of sale
+      </Link>
+    </section>
+  );
+}
+
+function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => void }) {
   const user = useUser();
   const [mobileMenu, setMobileMenu] = useState(false);
-  const visibleItems = navItems.filter((item) => user.permissions.includes(item.permission));
+  const [collapsed, setCollapsed] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [online, setOnline] = useState(navigator.onLine);
+  const { data: shiftState } = useQuery({
+    queryKey: ["current-shift"],
+    queryFn: () => api<{ shift: { id: string } | null }>("/shifts/current"),
+  });
+  useEffect(() => {
+    const onOnline = () => setOnline(true);
+    const onOffline = () => setOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => { window.removeEventListener("online", onOnline); window.removeEventListener("offline", onOffline); };
+  }, []);
+  useEffect(() => {
+    function focusSearch(event: KeyboardEvent) {
+      if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
+      if ((event.target as HTMLElement | null)?.matches("input, textarea, select")) return;
+      const field = document.querySelector<HTMLInputElement>(".search-wrap input, input[aria-label='Search sales'], input[aria-label='Search table']");
+      if (field) { event.preventDefault(); field.focus(); }
+    }
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
+  const visibleSections = navSections.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => user.permissions.includes(item.permission)),
+  })).filter((section) => section.items.length > 0);
+  const mobileItems = visibleSections.flatMap((section) => section.items).slice(0, 4);
   return (
     <div className="app-shell">
-      <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
+      <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""} ${collapsed ? "sidebar-collapsed" : ""}`}>
         <Link to="/" className="brand-lockup" onClick={() => setMobileMenu(false)}>
-          <span className="brand-monogram">EJ</span>
+          {brand.logoUrl && <img className="brand-logo" src={brand.logoUrl} alt="" />}
           <span>
-            <b>{APP_NAME}</b>
+            <b className="nav-label">{brand.brandName}</b>
             <small>RETAIL POS</small>
           </span>
         </Link>
-        <div className="nav-section-label">WORKSPACE</div>
+        <button className="sidebar-collapse" aria-label={collapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => setCollapsed((value) => !value)}><Icon name={collapsed ? "menu" : "layout"} /></button>
         <nav className="main-nav">
-          {visibleItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === "/"}
-              onClick={() => setMobileMenu(false)}
-              className={({ isActive }) => `nav-link ${isActive ? "nav-active" : ""}`}
-            >
-              <span className="nav-glyph" aria-hidden="true">
-                {item.glyph}
-              </span>
-              {item.label}
-            </NavLink>
+          {visibleSections.map((section) => (
+            <div className="nav-group" key={section.label}>
+              <div className="nav-section-label">{section.label}</div>
+              {section.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === "/"}
+                  onClick={() => setMobileMenu(false)}
+                  className={({ isActive }) => `nav-link ${isActive ? "nav-active" : ""}`}
+                >
+                  <Icon name={item.icon} className="nav-glyph" />
+                  <span className="nav-label">{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
           ))}
+          <div className="nav-group system-nav-group">
+            <div className="nav-section-label">System</div>
+            <button className="nav-link system-signout" onClick={onLogout}><Icon name="logout" className="nav-glyph" /><span className="nav-label">Sign out</span></button>
+          </div>
         </nav>
         <div className="sidebar-bottom">
           <div className="user-mini">
@@ -323,9 +374,6 @@ function AppShell({ onLogout }: { onLogout: () => void }) {
               <small>{user.role === "admin" ? "Administrator" : "Staff member"}</small>
             </span>
           </div>
-          <button className="logout-button" onClick={onLogout}>
-            Sign out
-          </button>
         </div>
       </aside>
       {mobileMenu && (
@@ -342,15 +390,29 @@ function AppShell({ onLogout }: { onLogout: () => void }) {
             aria-label="Open navigation"
             onClick={() => setMobileMenu(!mobileMenu)}
           >
-            ☰
+            <Icon name="menu" />
           </button>
           <div className="topbar-title">
-            Eminent Jay <span>/</span> {user.role === "admin" ? "Admin workspace" : "Staff till"}
+            <span className="topbar-brand">{brand.brandName}</span>
+            <span aria-hidden="true">/</span>
+            <span className="topbar-role">{user.role === "admin" ? "Admin workspace" : "Staff till"}</span>
           </div>
           <div className="topbar-right">
-            <span className="online-dot" />
-            Online <span className="topbar-divider" />
-            <span>{user.name}</span>
+            <span className={`connectivity-indicator ${online ? "" : "connectivity-offline"}`} role="status" aria-label={online ? "Online" : "Offline"}>
+              <Icon name={online ? "wifi" : "wifi-off"} />
+              <span>{online ? "Online" : "Offline"}</span>
+            </span>
+            <span className="topbar-divider" />
+            <span className="shift-indicator" role="status">
+              {shiftState?.shift ? "Shift open" : shiftState ? "No open shift" : "Shift status loading"}
+            </span>
+            <span className="topbar-divider" />
+            <div className="user-menu-wrap">
+              <button className="user-menu-trigger" aria-expanded={userMenuOpen} onClick={() => setUserMenuOpen((open) => !open)}>
+                <span className="topbar-avatar">{user.name.slice(0, 1).toUpperCase()}</span><span className="topbar-user-name">{user.name}</span>
+              </button>
+              {userMenuOpen && <div className="user-menu-popover"><b>{user.name}</b><small>{user.role === "admin" ? "Administrator" : "Staff member"}</small><button onClick={onLogout}><Icon name="logout" />Sign out</button></div>}
+            </div>
           </div>
         </header>
         <main className="content">
@@ -384,10 +446,18 @@ function AppShell({ onLogout }: { onLogout: () => void }) {
                 </RoleGate>
               }
             />
-            <Route path="*" element={<POSPage />} />
+            <Route path="*" element={<PageNotFound />} />
           </Routes>
         </main>
       </div>
+      <nav className="mobile-tabbar" aria-label="Primary navigation">
+        {mobileItems.map((item) => (
+          <NavLink key={item.to} to={item.to} end={item.to === "/"} aria-label={item.label}>
+            <Icon name={item.icon} />
+            <span>{item.label}</span>
+          </NavLink>
+        ))}
+      </nav>
     </div>
   );
 }
@@ -398,7 +468,7 @@ function RoleGate({ permission, children }: { permission: string; children: Reac
     <>{children}</>
   ) : (
     <section className="access-denied">
-      <div className="empty-symbol">×</div>
+      <div className="empty-symbol"><Icon name="x" /></div>
       <h1>Access restricted</h1>
       <p>This page is only available to administrators.</p>
       <Link className="button" to="/">
@@ -409,7 +479,6 @@ function RoleGate({ permission, children }: { permission: string; children: Reac
 }
 
 function POSPage() {
-  const user = useUser();
   const navigate = useNavigate();
   const {
     data: catalog,
@@ -438,6 +507,7 @@ function POSPage() {
   const [showHeld, setShowHeld] = useState(false);
   const [holdError, setHoldError] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
+  const searchRef = useRef<HTMLInputElement>(null);
   const [payOpen, setPayOpen] = useState(false);
   const [method, setMethod] = useState<"cash" | "mpesa_stk" | "split">("cash");
   const [tender, setTender] = useState("");
@@ -455,7 +525,7 @@ function POSPage() {
             (!department || p.department.id === department) &&
             (!type || p.productType.id === type) &&
             (!search ||
-              `${p.name} ${p.brand?.name ?? ""} ${p.variants.map((v) => v.sku).join(" ")}`
+              `${p.name} ${p.brand?.name ?? ""} ${p.variants.map((v) => `${v.sku} ${v.barcode ?? ""}`).join(" ")}`
                 .toLowerCase()
                 .includes(search.toLowerCase())),
         )
@@ -470,6 +540,24 @@ function POSPage() {
       api<{ status: string }>(`/payments/${activePaymentId}/check`, { method: "POST", body: "{}" }),
     refetchInterval: (query) => (query.state.data?.status === "pending" ? 2500 : false),
   });
+  useEffect(() => {
+    function handleTillKeys(event: KeyboardEvent) {
+      if (event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        const target = event.target as HTMLElement | null;
+        if (target?.matches("input, textarea, select")) return;
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
+      if (event.key === "Escape") setPayOpen(false);
+      if (event.ctrlKey && event.key === "Enter" && cart.length) {
+        event.preventDefault();
+        setPayOpen(true);
+        setTender(currencyInput(total));
+      }
+    }
+    window.addEventListener("keydown", handleTillKeys);
+    return () => window.removeEventListener("keydown", handleTillKeys);
+  }, [cart.length, total]);
   const refresh = useRefresh(["catalog"], ["sales"], ["current-shift"], ["stock"], ["held-carts"]);
   const saleMutation = useMutation({
     mutationFn: async () => {
@@ -546,7 +634,7 @@ function POSPage() {
           detail="Open a shift before you start a sale."
         />
         <section className="empty-card">
-          <div className="empty-symbol">◷</div>
+          <div className="empty-symbol"><Icon name="clock" /></div>
           <h2>No active shift</h2>
           <p>Record your opening cash float to unlock the till.</p>
           <Button onClick={() => navigate("/shift")}>Open a shift</Button>
@@ -555,24 +643,25 @@ function POSPage() {
     );
   return (
     <div className="pos-page">
-      <div className="pos-heading">
-        <div>
-          <p className="eyebrow">SELLING · {user.name.toUpperCase()}</p>
-          <h1>Point of sale</h1>
-        </div>
-        <span className="status-pill status-success">Shift open</span>
-      </div>
       <div className="pos-layout">
         <section className="product-browser">
           <div className="search-wrap">
-            <span aria-hidden="true">⌕</span>
+            <Icon name="search" />
             <input
               aria-label="Search products"
+              ref={searchRef}
+              autoFocus
               placeholder="Search products, brand or SKU"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && variants[0]) {
+                  event.preventDefault();
+                  addToCart(variants[0].product, variants[0].variant);
+                }
+              }}
             />
-            <kbd>⌘ K</kbd>
+            <kbd>/</kbd>
           </div>
           <div className="chip-row">
             {[{ id: "", name: "All departments" }, ...(catalog?.departments ?? [])].map((item) => (
@@ -604,36 +693,29 @@ function POSPage() {
                 <button
                   key={variant.id}
                   className="product-card"
+                  data-testid="product-card"
                   disabled={available <= 0 || inCart >= available}
                   onClick={() => addToCart(product, variant)}
                 >
-                  <div className="product-art">
-                    {product.imageUrl ? <img src={product.imageUrl} alt="" /> : <span>EJ</span>}
-                    <span
-                      className={`stock-badge ${available <= 0 ? "stock-empty" : available < 4 ? "stock-low" : ""}`}
-                    >
-                      {available} in stock
-                    </span>
+                  <div className={`product-art product-art-${product.productType.code.toLowerCase()}`}>
+                    {product.imageUrl ? (
+                      <img src={product.imageUrl} alt={`${product.name}`} width={166} height={166} />
+                    ) : (
+                      <span className="product-placeholder">
+                        <span className="placeholder-monogram">EJ</span>
+                        <Icon className="product-type-icon" name={productTypeIcon(product.productType.code)} />
+                        <small>{product.name}</small>
+                      </span>
+                    )}
+                    {available <= 5 && <span className={`stock-badge ${available <= 0 ? "stock-empty" : "stock-low"}`}>{available <= 0 ? "Out of stock" : `${available} left`}</span>}
+                    {inCart > 0 && <span className="product-qty-badge" aria-label={`${inCart} in cart`}>{inCart}</span>}
                   </div>
                   <div className="product-card-body">
                     <span className="product-brand">
                       {product.brand?.name ?? product.productType.name}
                     </span>
                     <b>{product.name}</b>
-                    <span className="product-variant">
-                      {variant.sku}
-                      {Object.values(variant.attributes ?? {})
-                        .filter(Boolean)
-                        .slice(0, 2)
-                        .map(String)
-                        .join(" · ")
-                        ? ` · ${Object.values(variant.attributes ?? {})
-                            .filter(Boolean)
-                            .slice(0, 2)
-                            .map(String)
-                            .join(" · ")}`
-                        : ""}
-                    </span>
+                    <span className="variant-chips">{Object.entries(variant.attributes ?? {}).filter(([,value]) => value !== null && value !== undefined && String(value).trim() !== "").slice(0, 3).map(([key,value]) => <span className="variant-chip" key={key}>{formatVariant(key, value)}</span>)}</span>
                     <strong>{money(variant.priceCents)}</strong>
                   </div>
                 </button>
@@ -686,28 +768,27 @@ function POSPage() {
                   <b>{held.label ?? "Held cart"}</b>
                   <small>
                     {held.cartJson.items.length} items ·{" "}
-                    {new Date(held.createdAt).toLocaleTimeString()}
+                    {shopTime(held.createdAt)}
                   </small>
                 </button>
               ))}
-              {!heldCarts?.carts.length && <small>No held carts</small>}
             </div>
           )}
           {holdError && <Notice tone="error">{holdError}</Notice>}
           <div className="cart-lines">
             {cart.length === 0 ? (
               <div className="cart-empty">
-                <span>＋</span>
+                <span><Icon name="cart" /></span>
                 <p>Add an item to begin</p>
                 <small>Your selections will appear here.</small>
               </div>
             ) : (
               cart.map((line) => (
-                <div className="cart-line" key={line.variant.id}>
+                <div className="cart-line" data-testid="cart-line" key={line.variant.id}>
                   <div className="cart-item-name">
                     <b>{line.product.name}</b>
                     <small>
-                      {line.variant.sku} · {money(line.variant.priceCents)}
+                      {Object.entries(line.variant.attributes ?? {}).filter(([,value]) => value !== null && value !== undefined && String(value).trim() !== "").slice(0, 2).map(([key,value]) => formatVariant(key,value)).join(" · ") || line.product.brand?.name || line.product.productType.name} · {money(line.variant.priceCents)}
                     </small>
                   </div>
                   <div className="qty-control">
@@ -725,7 +806,7 @@ function POSPage() {
                         )
                       }
                     >
-                      −
+                      <Icon name="minus" />
                     </button>
                     <span>{line.quantity}</span>
                     <button
@@ -735,7 +816,7 @@ function POSPage() {
                       }
                       onClick={() => addToCart(line.product, line.variant)}
                     >
-                      +
+                      <Icon name="plus" />
                     </button>
                   </div>
                   <b className="cart-line-total">
@@ -745,6 +826,7 @@ function POSPage() {
               ))
             )}
           </div>
+          <div className="cart-footer">
           <div className="cart-summary">
             <div>
               <span>Subtotal</span>
@@ -773,7 +855,7 @@ function POSPage() {
                 await api("/sales/held-carts", {
                   method: "POST",
                   body: JSON.stringify({
-                    label: new Date().toLocaleTimeString(),
+                    label: shopTime(new Date()),
                     items: cart.map(({ variant, quantity }) => ({
                       variantId: variant.id,
                       quantity,
@@ -785,12 +867,13 @@ function POSPage() {
                 setHoldError("");
               } catch (e) {
                 saleMutation.reset();
-                alert(e instanceof Error ? e.message : "Could not hold cart");
+                setHoldError(e instanceof Error ? e.message : "Could not hold this cart. Try again.");
               }
             }}
           >
             Hold cart
           </button>
+          </div>
         </aside>
       </div>
       {payOpen && (
@@ -810,12 +893,12 @@ function POSPage() {
                   saleMutation.reset();
                 }}
               >
-                ×
+                <Icon name="x" />
               </button>
             )}
             {activePaymentId ? (
               <>
-                <div className="modal-icon modal-icon-wait">◷</div>
+                <div className="modal-icon modal-icon-wait" aria-hidden="true"><span className="spinner" /></div>
                 <p className="eyebrow">MPESA STK PUSH</p>
                 <h2 id="pay-title">
                   {stkInitiated ? "Waiting for payment" : "Start payment prompt"}
@@ -827,7 +910,7 @@ function POSPage() {
                 </p>
                 <div className="payment-amount">{money(total)}</div>
                 {stkInitiated && (
-                  <div className="payment-status">
+                  <div className="payment-status" aria-live="polite">
                     <span
                       className={`status-dot ${paymentStatus.data?.status === "paid" ? "status-dot-green" : ""}`}
                     />
@@ -910,7 +993,7 @@ function POSPage() {
                     className={`payment-method ${method === "cash" ? "payment-method-active" : ""}`}
                     onClick={() => setMethod("cash")}
                   >
-                    <span>▣</span>
+                    <Icon name="banknote" />
                     <b>Cash</b>
                     <small>Cash tendered</small>
                   </button>
@@ -918,7 +1001,7 @@ function POSPage() {
                     className={`payment-method ${method === "mpesa_stk" ? "payment-method-active" : ""}`}
                     onClick={() => setMethod("mpesa_stk")}
                   >
-                    <span>◉</span>
+                    <Icon name="banknote" />
                     <b>M-Pesa</b>
                     <small>STK Push</small>
                   </button>
@@ -929,7 +1012,7 @@ function POSPage() {
                       setTender(currencyInput(Math.floor(total / 2)));
                     }}
                   >
-                    <span>◐</span>
+                    <Icon name="layout" />
                     <b>Split</b>
                     <small>Cash + M-Pesa</small>
                   </button>
@@ -1006,17 +1089,31 @@ function POSPage() {
       )}
       {receiptSale && !payOpen && !activePaymentId && (
         <div className="toast success-toast">
-          <span>✓</span>
+          <span>Paid</span>
           <span>Sale {receiptSale.receiptNo} completed.</span>
           <button onClick={() => void printReceipt(receiptSale.id, "html")}>Print receipt</button>
           <button onClick={() => void printReceipt(receiptSale.id, "pdf")}>PDF</button>
           <button aria-label="Dismiss" onClick={() => setReceiptSale(null)}>
-            ×
+                <Icon name="x" />
           </button>
         </div>
       )}
     </div>
   );
+}
+
+function formatVariant(key: string, value: unknown) {
+  const normalized = key.toLowerCase().replace(/[_-]/g, " ").trim();
+  const label = typeof value === "number" && /ml|volume/.test(normalized) ? `${value} ml` : String(value);
+  return label.replace(/\s+/g, " ").replace(/\b(edp|edt|edc)\b/gi, (part) => part.toUpperCase());
+}
+
+function productTypeIcon(typeCode: string): "spray" | "shirt" | "feet" | "sparkles" {
+  const code = typeCode.toLowerCase();
+  if (/perfume|fragrance|scent|body.?spray/.test(code)) return "spray";
+  if (/shoe|footwear|sandal/.test(code)) return "feet";
+  if (/cloth|dress|top|trouser|apparel/.test(code)) return "shirt";
+  return "sparkles";
 }
 
 async function printReceipt(saleId: string, format: "html" | "pdf" = "html") {
@@ -1138,7 +1235,7 @@ function ShiftPage() {
             <Metric
               label="Shift status"
               value="Open"
-              detail={`Since ${new Date(shift.openedAt).toLocaleString()}`}
+              detail={`Since ${shopDateTime(shift.openedAt)}`}
             />
             <Metric
               label="Opening float"
@@ -1259,14 +1356,14 @@ function DataTable({
   rows: React.ReactNode[][];
   empty: string;
 }) {
-  if (!rows.length) return <div className="table-empty">{empty}</div>;
+  if (!rows.length) return <div className="table-empty"><Icon name="receipt" /><p>{empty}</p><Link className="text-button" to="/">Go to point of sale</Link></div>;
   return (
     <div className="table-scroll">
       <table>
         <thead>
           <tr>
             {headers.map((header) => (
-              <th key={header}>{header}</th>
+              <th className={/total|amount|price|money/i.test(header) ? "money-cell" : ""} key={header}>{header}</th>
             ))}
           </tr>
         </thead>
@@ -1274,7 +1371,7 @@ function DataTable({
           {rows.map((row, index) => (
             <tr key={index}>
               {row.map((cell, col) => (
-                <td key={col}>{cell}</td>
+                <td className={/total|amount|price|money/i.test(headers[col] ?? "") ? "money-cell" : ""} key={col}>{cell}</td>
               ))}
             </tr>
           ))}
@@ -1329,7 +1426,7 @@ function SalesPage() {
           empty="No sales found."
           rows={(data?.sales ?? []).map((sale) => [
             <b>{sale.receiptNo}</b>,
-            new Date(sale.createdAt).toLocaleString(),
+            shopDateTime(sale.createdAt),
             sale.seller.name,
             sale.items.reduce((sum, item) => sum + item.qty, 0),
             money(sale.totalCents),
@@ -1368,7 +1465,7 @@ function SalesPage() {
         <div className="modal-backdrop">
           <section className="modal-card" role="dialog" aria-modal="true">
             <button className="modal-close" onClick={() => setSelected(null)} aria-label="Close">
-              ×
+              <Icon name="x" />
             </button>
             <p className="eyebrow">RETURN REQUEST</p>
             <h2>{selected.receiptNo}</h2>
@@ -1418,14 +1515,24 @@ function SalesPage() {
   );
 }
 function StatusPill({ value }: { value: string }) {
-  const success = ["completed", "paid", "approved", "open"].includes(value);
-  const danger = ["failed", "rejected", "expired"].includes(value);
+  const success = ["completed", "paid", "approved", "open", "active", "verified", "synced"].includes(value);
+  const danger = ["failed", "rejected", "expired", "voided", "inactive"].includes(value);
+  const labels: Record<string, string> = {
+    completed: "Completed",
+    partially_refunded: "Partially refunded",
+    pending_verification: "Pending verification",
+    needs_review: "Needs review",
+    out_of_stock: "Out of stock",
+    inactive: "Deactivated",
+    unmatched: "Unmatched",
+  };
+  const label = labels[value] ?? value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
   return (
     <span
       className={`status-pill ${success ? "status-success" : danger ? "status-danger" : "status-pending"}`}
     >
-      <span aria-hidden="true">{success ? "●" : danger ? "!" : "◷"}</span>{" "}
-      {value.replaceAll("_", " ")}
+      <Icon className="status-icon" name={success ? "check" : danger ? "alert" : "clock"} />
+      {label}
     </span>
   );
 }
@@ -1490,7 +1597,7 @@ function StockPage() {
       {feedback && <Notice tone="success">{feedback}</Notice>}
       <div className="toolbar">
         <div className="search-wrap search-wrap-light">
-          <span>⌕</span>
+          <span>Find</span>
           <input
             placeholder="Find a product, SKU or barcode"
             value={search}
@@ -1680,7 +1787,7 @@ function RefundsPage() {
             <p>{refund.reason}</p>
             <small className="muted">
               Requested by {refund.requester.name} ·{" "}
-              {new Date(refund.createdAt).toLocaleDateString()}
+              {shopDate(refund.createdAt)}
             </small>
             <ul className="refund-items">
               {refund.items.map((item) => (
@@ -1821,7 +1928,7 @@ function DashboardPage() {
             <div
               className="chart-column"
               key={day.date.toISOString()}
-              title={`${day.date.toLocaleDateString()}: ${money(day.valueCents)}`}
+              title={`${shopDate(day.date)}: ${money(day.valueCents)}`}
             >
               <b>{day.valueCents ? money(day.valueCents) : "—"}</b>
               <div className="chart-track">
@@ -1836,7 +1943,7 @@ function DashboardPage() {
                   }}
                 />
               </div>
-              <small>{day.date.toLocaleDateString("en-KE", { weekday: "short" })}</small>
+              <small>{shopDate(day.date, { weekday: "short", month: undefined, day: undefined, dateStyle: undefined })}</small>
             </div>
           ))}
         </div>
@@ -1926,7 +2033,7 @@ function UnmatchedPaymentsPanel() {
             orphan.mpesaReceipt ?? "—",
             money(orphan.amountCents),
             orphan.phone ?? "—",
-            new Date(orphan.createdAt).toLocaleString(),
+            shopDateTime(orphan.createdAt),
             <select
               aria-label={`Sale payment for ${orphan.mpesaReceipt ?? "unmatched payment"}`}
               value={choices[orphan.id] ?? ""}
@@ -2256,11 +2363,11 @@ function CatalogAdminPage() {
 function DesignPage() {
   return (
     <main className="design-page">
-      <Link to="/">← Back to login</Link>
+      <Link to="/">Back to point of sale</Link>
       <PageHeader
         eyebrow="DEVELOPMENT PREVIEW"
         title="Design system"
-        detail="Eminent Jay color, type, components and interface states."
+        detail="Shop colors, type, components and interface states."
       />
       <div className="design-grid">
         <section className="surface form-surface">
@@ -2324,28 +2431,51 @@ function DesignPage() {
 }
 
 export default function App() {
+  const location = useLocation();
   const queryClient = useQueryClient();
+  const { data: brand } = useQuery({
+    queryKey: ["brand"],
+    queryFn: () => api<BrandSettings>("/brand"),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const brandSettings = brand ?? { brandName: "Shop", logoUrl: null };
   const { data, isPending } = useQuery({
     queryKey: ["me"],
     queryFn: () => api<{ user: AppUser }>("/auth/me"),
     retry: false,
     staleTime: 60_000,
   });
+  useEffect(() => {
+    const routeTitles: Record<string, string> = {
+      "/": "Point of sale",
+      "/shift": "My shift",
+      "/sales": "Sales and receipts",
+      "/stock": "Stock lookup",
+      "/refunds": "Returns",
+      "/admin": "Overview",
+      "/admin/catalog": "Catalog",
+      "/admin/staff": "Staff",
+    };
+    const route = location.pathname;
+    document.title = `${routeTitles[route] ?? "Page not found"} | ${brandSettings.brandName}`;
+  }, [location.pathname, brandSettings.brandName]);
   if (import.meta.env.DEV && window.location.pathname === "/design") return <DesignPage />;
   if (isPending)
     return (
       <div className="app-loading">
-        <Loading label="Opening Eminent Jay" />
+        <Loading label="Opening your shop" />
       </div>
     );
   const user = data?.user;
   if (!user)
     return (
-      <LoginPage onLogin={(nextUser) => queryClient.setQueryData(["me"], { user: nextUser })} />
+      <LoginPage brand={brandSettings} onLogin={(nextUser) => queryClient.setQueryData(["me"], { user: nextUser })} />
     );
   if (user.mustChangePassword)
     return (
       <PasswordChange
+        brand={brandSettings}
         onDone={() => {
           void queryClient.invalidateQueries({ queryKey: ["me"] });
         }}
@@ -2361,7 +2491,7 @@ export default function App() {
   }
   return (
     <UserContext.Provider value={user}>
-      <AppShell onLogout={() => void logout()} />
+      <AppShell brand={brandSettings} onLogout={() => void logout()} />
     </UserContext.Provider>
   );
 }

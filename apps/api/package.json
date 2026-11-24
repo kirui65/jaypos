@@ -4,13 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "DOTENV_CONFIG_PATH=../../.env NODE_OPTIONS=--require=dotenv/config tsx watch src/server.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate deploy",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:generate": "DOTENV_CONFIG_PATH=../../.env NODE_OPTIONS=--require=dotenv/config prisma generate",
+    "db:migrate": "DOTENV_CONFIG_PATH=../../.env NODE_OPTIONS=--require=dotenv/config prisma migrate deploy",
+    "db:seed": "DOTENV_CONFIG_PATH=../../.env NODE_OPTIONS=--require=dotenv/config tsx prisma/seed.ts"
   },
   "dependencies": {
     "@eminent/shared": "workspace:*",

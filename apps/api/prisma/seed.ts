@@ -30,6 +30,7 @@ async function main() {
     create: {
       id: "00000000-0000-4000-8000-000000000001",
       name: "Eminent Jay",
+      logoUrl: "/logo.webp",
       settingsJson: { currency: "KES", timeZone: "Africa/Nairobi" },
     },
   });
