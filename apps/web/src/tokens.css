@@ -27,7 +27,7 @@
   --ej-size-target: 40px;
   --ej-size-avatar: 30px;
   --ej-size-popover: 192px;
-  --ej-size-total: 32px;
+  --ej-size-total: 30px;
   --ej-size-topbar: 62px;
   --ej-space-1: 4px;
   --ej-space-2: 8px;
@@ -50,11 +50,14 @@
   --ej-speed-fast: 150ms;
   --ej-font-ui: "EJ Sans", sans-serif;
   --ej-font-display: "EJ Serif", serif;
+  --ej-font-ui-fast: system-ui, sans-serif;
+  --ej-font-display-fast: Georgia, serif;
   --ej-black: #0b0b0b;
   --ej-ink: #141414;
   --ej-charcoal: #1c1c1c;
   --ej-graphite: #2a2a2a;
   --ej-gold: #d4af37;
+  --ej-bronze: #3b2411;
   --ej-gold-soft: #e8cf7a;
   --ej-gold-deep: #8a6d1a;
   --ej-gold-wash: #fbf5e1;
@@ -93,5 +96,15 @@
   --ej-overlay-heavy: rgb(11 11 11 / 55%);
   --ej-glass-white: rgb(255 255 255 / 95%);
   --ej-glass-line: rgb(231 227 214 / 85%);
+  --ej-login-glass: rgb(11 11 11 / 55%);
+  --ej-login-glass-fallback: var(--ej-ink);
+  --ej-login-bronze-wash: rgb(59 36 17 / 44%);
+  --ej-login-bronze-soft: rgb(59 36 17 / 28%);
+  --ej-login-gold-wash: rgb(212 175 55 / 9%);
+  --ej-login-glass-border: rgb(232 207 122 / 22%);
+  --ej-login-glass-highlight: rgb(255 255 255 / 8%);
+  --ej-login-input: rgb(255 255 255 / 6%);
+  --ej-login-input-border: rgb(255 255 255 / 14%);
+  --ej-login-shadow: 0 16px 48px rgb(0 0 0 / 45%);
   --ej-gold-glow: rgb(212 175 55 / 8%);
 }

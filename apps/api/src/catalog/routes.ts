@@ -229,6 +229,7 @@ catalogRouter.get(
   requirePermission("stock.read"),
   async (request: AuthenticatedRequest, response) => {
     const shopId = request.authUser!.shopId;
+    response.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
     const [departments, productTypes, brands, products, bundles] = await Promise.all([
       prisma.department.findMany({ where: { shopId }, orderBy: { name: "asc" } }),
       prisma.productType.findMany({ where: { shopId }, orderBy: { name: "asc" } }),

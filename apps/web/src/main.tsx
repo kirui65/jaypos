@@ -1,21 +1,57 @@
 import "./tokens.css";
-import "./styles.css";
+import "./login.css";
 
 const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:3001").replace(/\/$/, "");
 const root = document.getElementById("root")!;
 const form = document.getElementById("login-form") as HTMLFormElement;
 const errorBox = document.getElementById("login-error")!;
 const submitButton = document.getElementById("login-submit") as HTMLButtonElement;
+let disposeLoginShader: (() => void) | undefined;
+
+function dismissBootSplash() {
+  const splash = document.getElementById("boot-splash");
+  if (!splash || splash.classList.contains("boot-splash-hidden")) return;
+  splash.classList.add("boot-splash-hidden");
+  window.setTimeout(() => splash.remove(), 220);
+}
 
 async function openShell() {
+  document.body.classList.remove("public-login");
+  disposeLoginShader?.();
   root.innerHTML = '<main class="app-loading" aria-live="polite"><span class="spinner"></span><span>Opening your shop</span></main>';
   const { mountShell } = await import("./AuthenticatedShell.js");
   mountShell(root);
+  requestAnimationFrame(dismissBootSplash);
+}
+
+function scheduleLoginShader() {
+  const nav = navigator as Navigator & { connection?: { saveData?: boolean }; deviceMemory?: number };
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || window.matchMedia("(max-width: 640px)").matches || nav.connection?.saveData ||
+      (navigator.hardwareConcurrency > 0 && navigator.hardwareConcurrency <= 4) ||
+      (nav.deviceMemory !== undefined && nav.deviceMemory <= 4)) return;
+  const load = () => {
+    if (!document.querySelector(".login-page")) return;
+    void import("./login-gold-shader.js")
+      .then(({ mountLoginShader }) => {
+        const host = document.querySelector<HTMLElement>(".login-backdrop");
+        if (!host || !document.querySelector(".login-page")) return;
+        try { disposeLoginShader = mountLoginShader(host); } catch { /* Keep the static CSS background. */ }
+      })
+      .catch(() => undefined);
+  };
+  const idle = window as Window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number };
+  requestAnimationFrame(() => {
+    if (idle.requestIdleCallback) idle.requestIdleCallback(load, { timeout: 1800 });
+    else window.setTimeout(load, 250);
+  });
 }
 
 if (import.meta.env.DEV && window.location.pathname === "/design") {
   void openShell();
 } else {
+  window.setTimeout(dismissBootSplash, 320);
+  if (import.meta.env.DEV) reportWebVitals();
+  if (window.location.pathname === "/") scheduleLoginShader();
   void fetch(`${API_URL}/api/brand`)
     .then(async (response) => response.ok ? response.json() as Promise<{ brandName?: string; logoUrl?: string | null }> : undefined)
     .then((brand) => {
@@ -60,4 +96,25 @@ if (import.meta.env.DEV && window.location.pathname === "/design") {
         submitButton.textContent = "Sign in";
       });
   });
+}
+
+function reportWebVitals() {
+  if (!("PerformanceObserver" in window)) return;
+  const log = (name: string, value: number) => console.info(`[web-vitals] ${name}: ${Math.round(value * 10) / 10} ms`);
+  try {
+    new PerformanceObserver((list) => {
+      const entries = list.getEntries();
+      if (entries.length) log("LCP", entries[entries.length - 1]!.startTime);
+    }).observe({ type: "largest-contentful-paint", buffered: true });
+    let cls = 0;
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries() as (PerformanceEntry & { value: number; hadRecentInput: boolean })[]) if (!entry.hadRecentInput) cls += entry.value;
+      console.info(`[web-vitals] CLS: ${cls.toFixed(4)}`);
+    }).observe({ type: "layout-shift", buffered: true });
+    new PerformanceObserver((list) => {
+      const entries = list.getEntries();
+      const worst = entries.reduce((max, entry) => Math.max(max, entry.duration), 0);
+      if (worst) log("INP candidate", worst);
+    }).observe({ type: "event", buffered: true, durationThreshold: 40 } as PerformanceObserverInit);
+  } catch { /* Browser does not expose all web-vitals entry types. */ }
 }

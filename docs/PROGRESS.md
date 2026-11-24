@@ -196,3 +196,10 @@ The web app requires an available PostgreSQL database and seeded shop/admin data
 - Use `corepack pnpm` commands when a `pnpm` shim is not available.
 - No `.env` or production secrets have been created or committed. The seed generates a one-time admin password if `ADMIN_SEED_PASSWORD` is empty and prints it when creating the initial account.
 - Lipwa credentials, channel ID, callback URL, and a live merchant transaction remain a `TODO(lipwa)` before production.
+
+## Post-M8 — Loading/performance handoff (2026-11-24)
+
+- Added the boot/login loading treatment, delayed skeleton primitives, saving controls, IndexedDB catalog cache, route data prefetch, API compression, cache headers, and paged sales reads. No customer API/UI exists yet, and route pages remain in the authenticated app chunk; product cards use normal DOM rendering.
+- `corepack pnpm -r --if-present run typecheck`, `corepack pnpm lint`, `corepack pnpm test`, and `corepack pnpm build` passed during the latest audit.
+- Latest completed Lighthouse: desktop performance 97, LCP 1,217 ms, CLS 0.004. Latest mobile score 73, LCP 1,326 ms, CLS 0.000, TBT 1,520 ms; mobile target remains unmet despite disabling the shader on small devices and splitting login CSS.
+- Authenticated Playwright sweep was stopped after 26/59 cases while resolving touch sizing. Rerun `bash scripts/audit.sh` with `E2E_ADMIN_USER`, `E2E_ADMIN_PASS`, `E2E_STAFF_USER`, and `E2E_STAFF_PASS` before marking loading/performance complete.

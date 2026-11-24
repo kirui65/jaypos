@@ -38,13 +38,15 @@ const PALETTE_HEX = [
   '0B0B0B', '141414', '1C1C1C', '2A2A2A', // blacks
   'D4AF37', 'E8CF7A', '8A6D1A', 'FBF5E1', // golds
   'FFFFFF', 'F7F6F2', 'E7E3D6', '6B6B66', // neutrals
+  'D0CEC5', // softer text on dark surfaces
+  '9B9B94', 'AAA9A2', '205D26', '80540C', 'FBF3DD', 'C6C4BB', 'FFeded', 'C4C2B9', '77766F', // muted, control and status tokens
   '2E7D32', 'B26A00', 'C62828',           // status
   'E8F3E9', 'FBEFD9', 'FBE7E7',           // status washes
 ];
 const PALETTE = PALETTE_HEX.map((hex) => (hex.match(/../g) as string[]).map((h) => parseInt(h, 16)).join(','));
 const TYPE_SCALE_PX = [12, 14, 16, 18, 20, 24, 30, 36];
 const ALLOWED_FONTS = new RegExp(
-  process.env.E2E_ALLOWED_FONTS ?? '^(EJ Sans|EJ Serif|Noto Sans|Noto Serif|ui-monospace|monospace|JetBrains Mono)$',
+  process.env.E2E_ALLOWED_FONTS ?? '^(EJ Sans|EJ Serif|Noto Sans|Noto Serif|ui-monospace|monospace|JetBrains Mono|system-ui|Georgia)$',
   'i',
 );
 const MIN_TARGET_PX = 40; // the spec asks for 44; 40 allows for rounding
@@ -58,11 +60,77 @@ async function login(page: Page, creds: { user: string; pass: string }) {
   await page.getByRole('button', { name: /sign in|log in|login/i }).click();
   await page.waitForLoadState('networkidle');
   await page.locator('.app-shell').waitFor({ state: 'visible', timeout: 20_000 });
+  await page.waitForLoadState('networkidle');
 }
 
 const slug = (route: string) => (route === '/' ? 'home' : route.replace(/\W+/g, '-').replace(/^-|-$/g, ''));
 
 test.describe.configure({ timeout: 60_000 });
+
+test('login shader respects device support and reduced motion', async ({ browser }) => {
+  const standardContext = await browser.newContext();
+  const standardPage = await standardContext.newPage();
+  await standardPage.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', { configurable: true, value: 8 });
+    Object.defineProperty(Navigator.prototype, 'deviceMemory', { configurable: true, value: 8 });
+  });
+  await standardPage.route('**/api/brand', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ brandName: 'Eminent Jay', logoUrl: '/logo.webp' }),
+  }));
+  await standardPage.route('**/api/auth/me', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  await standardPage.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  const eligible = await standardPage.evaluate(() => {
+    const nav = navigator as Navigator & { connection?: { saveData?: boolean }; deviceMemory?: number };
+    return !matchMedia('(prefers-reduced-motion: reduce)').matches && !matchMedia('(max-width: 640px)').matches && !nav.connection?.saveData &&
+      !(navigator.hardwareConcurrency > 0 && navigator.hardwareConcurrency <= 4) &&
+      !(nav.deviceMemory !== undefined && nav.deviceMemory <= 4) && Boolean(document.createElement('canvas').getContext('webgl'));
+  });
+  if (eligible) {
+    await expect(standardPage.locator('.login-backdrop canvas')).toBeVisible({ timeout: 10_000 });
+    await expect(standardPage.locator('.login-backdrop')).toHaveClass(/shader-ready/);
+    for (const [index, delay] of [0, 1200, 2400].entries()) {
+      if (delay) await standardPage.waitForTimeout(delay);
+      await standardPage.screenshot({ path: `audit/screenshots/login-shader-${index}.png` });
+      const axe = await new AxeBuilder({ page: standardPage }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).include('.login-card').analyze();
+      expect(axe.violations.filter((violation) => violation.impact === 'serious' || violation.impact === 'critical')).toEqual([]);
+    }
+  } else {
+    expect(await standardPage.locator('.login-backdrop canvas').count()).toBe(0);
+  }
+  await standardContext.close();
+
+  const reducedContext = await browser.newContext({ reducedMotion: 'reduce' });
+  const reducedPage = await reducedContext.newPage();
+  await reducedPage.route('**/api/brand', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ brandName: 'Eminent Jay', logoUrl: '/logo.webp' }),
+  }));
+  await reducedPage.route('**/api/auth/me', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+  await reducedPage.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  await reducedPage.waitForTimeout(250);
+  expect(await reducedPage.locator('.login-backdrop canvas').count()).toBe(0);
+  await reducedContext.close();
+});
+
+test('reduced motion disables the authenticated skeleton shimmer', async ({ browser }) => {
+  test.skip(!CREDS.admin.pass, 'set E2E_ADMIN_USER and E2E_ADMIN_PASS');
+  const context = await browser.newContext({ reducedMotion: 'reduce' });
+  const page = await context.newPage();
+  await login(page, CREDS.admin);
+  const shimmerDisplay = await page.evaluate(() => {
+    const sample = document.createElement('span');
+    sample.className = 'skeleton';
+    document.body.append(sample);
+    const display = getComputedStyle(sample, '::after').display;
+    sample.remove();
+    return display;
+  });
+  expect(shimmerDisplay, 'reduced motion uses a static skeleton').toBe('none');
+  await context.close();
+});
 
 for (const role of ['public', 'admin', 'staff'] as const) {
   test.describe(`${role} pages`, () => {
@@ -95,10 +163,24 @@ for (const role of ['public', 'admin', 'staff'] as const) {
           page.on('response', (r) => { if (r.status() >= 500) problems.push(`HTTP ${r.status()}: ${r.url()}`); });
 
           if (role !== 'public') await login(page, CREDS[role as 'admin' | 'staff']);
-          await page.goto(`${BASE}${route}`, { waitUntil: 'networkidle' });
+          if (role === 'public' || route !== '/') await page.goto(`${BASE}${route}`, { waitUntil: 'networkidle' });
 
           if (role !== 'public' && route === '/') {
+            await expect(page.locator('.app-loading')).toHaveCount(0);
+            if (role === 'admin') {
+            await page.evaluate(() => {
+              let cls = 0;
+              new PerformanceObserver((list) => {
+                for (const entry of list.getEntries() as (LayoutShift & { hadRecentInput: boolean })[]) {
+                  if (!entry.hadRecentInput) cls += entry.value;
+                }
+                (window as Window & { __ejRouteCls?: number }).__ejRouteCls = cls;
+              }).observe({ type: 'layout-shift' });
+            });
             await expect(page.locator('.pos-page')).toBeVisible();
+            await expect(page.getByTestId('product-card').first()).toBeVisible({ timeout: 1_000 });
+            const routeCls = await page.evaluate(() => (window as Window & { __ejRouteCls?: number }).__ejRouteCls ?? 0);
+            expect(routeCls, 'POS route content should not shift while it loads').toBeLessThanOrEqual(0.1);
             const navLinks = page.locator('nav.main-nav a');
             for (let index = 0; index < await navLinks.count(); index += 1) {
               await expect(navLinks.nth(index).locator('svg'), 'each navigation item has a Lucide icon').toHaveCount(1);
@@ -112,6 +194,7 @@ for (const role of ['public', 'admin', 'staff'] as const) {
               const bodyScroll = await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight || document.body.scrollHeight > window.innerHeight);
               expect(bodyScroll, 'POS must fit the 1366x768 viewport without body scroll').toBe(false);
               await expect(page.getByRole('button', { name: /Pay ·/ })).toBeInViewport();
+            }
             }
           }
 
@@ -146,8 +229,8 @@ for (const role of ['public', 'admin', 'staff'] as const) {
               loaded: Array.from(document.fonts).filter((f) => f.status === 'loaded').map((f) => f.family),
             };
           });
-          expect.soft(fonts.body, 'body font-family').toMatch(/ej sans/i);
-          expect.soft(fonts.loaded.length, 'web fonts loaded').toBeGreaterThan(0);
+          expect.soft(fonts.body, 'body font-family').toMatch(vp.width <= 640 ? /system-ui|ej sans/i : /ej sans/i);
+          if (vp.width > 640) expect.soft(fonts.loaded.length, 'web fonts loaded').toBeGreaterThan(0);
 
           // 6. Colours: only the Eminent Jay palette (catches default browser grey, stray blues, etc.)
           const offPalette = await page.evaluate((allowed: string[]) => {

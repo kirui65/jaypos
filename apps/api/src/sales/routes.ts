@@ -159,16 +159,25 @@ salesRouter.get(
   requirePermission("sales.read.own"),
   async (request: AuthenticatedRequest, response) => {
     const user = request.authUser!;
+    const parsedPage = z.object({
+      scope: z.enum(["all"]).optional(),
+      page: z.coerce.number().int().min(1).default(1),
+      pageSize: z.coerce.number().int().min(1).max(100).default(100),
+    }).safeParse(request.query);
+    if (!parsedPage.success) return response.status(400).json({ error: "Invalid sales page" });
     const canReadAll = canAccess(user, "sales.read.all");
-    const all = canReadAll && request.query.scope === "all";
+    const all = canReadAll && parsedPage.data.scope === "all";
     const sales = await prisma.sale.findMany({
       where: { shopId: user.shopId, ...(all ? {} : { sellerId: user.id }) },
       include: saleInclude,
       orderBy: { createdAt: "desc" },
-      take: 100,
+      skip: (parsedPage.data.page - 1) * parsedPage.data.pageSize,
+      take: parsedPage.data.pageSize,
     });
     return response.json({
       sales: sales.map((sale) => serializeSale(sale, user.role.name === "admin")),
+      page: parsedPage.data.page,
+      pageSize: parsedPage.data.pageSize,
     });
   },
 );

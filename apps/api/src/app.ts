@@ -1,4 +1,5 @@
 import express from "express";
+import compression from "compression";
 import { z } from "zod";
 import { authRouter } from "./auth/routes.js";
 import { requireAuth } from "./auth/middleware.js";
@@ -19,6 +20,7 @@ const healthResponseSchema = z.object({
 export function createApp() {
   const app = express();
   app.disable("x-powered-by");
+  app.use(compression());
   app.use((_request, response, next) => {
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("X-Frame-Options", "DENY");

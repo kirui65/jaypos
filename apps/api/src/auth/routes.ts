@@ -8,6 +8,7 @@ import {
   clearSessionCookie,
   requireAuth,
   requirePermission,
+  sessionTokenFromRequest,
   setSessionCookie,
   type AuthenticatedRequest,
 } from "./middleware.js";
@@ -170,10 +171,20 @@ authRouter.post("/login", async (request, response) => {
   return response.json({ user: safeUser(user), expiresAt });
 });
 
+authRouter.get("/me", async (request: AuthenticatedRequest, response) => {
+  const token = sessionTokenFromRequest(request);
+  if (!token) return response.json({ user: null });
+  const session = await prisma.authSession.findUnique({
+    where: { tokenHash: hashToken(token) },
+    include: { user: { include: { role: { include: { permissions: { include: { permission: true } } } } } } },
+  });
+  if (!session || session.revokedAt || session.expiresAt <= new Date() || !session.user.active || session.user.archivedAt) {
+    clearSessionCookie(response);
+    return response.json({ user: null });
+  }
+  return response.json({ user: safeUser(session.user) });
+});
 authRouter.use(requireAuth);
-authRouter.get("/me", (request: AuthenticatedRequest, response) =>
-  response.json({ user: safeUser(request.authUser!) }),
-);
 authRouter.post("/logout", async (request: AuthenticatedRequest, response) => {
   if (request.sessionId && request.authUser)
     await prisma.$transaction([

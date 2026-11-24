@@ -26,6 +26,7 @@ This log records choices for the Phase 1 implementation. `TODO(spec)` marks an u
 - **N1 product title size:** the earlier polish checklist asks for 15 px, outside SPEC §10.1's typography scale. Product titles use the nearest specified size, 16 px.
 - **N1 toast placement:** the backlog asks for bottom-center toasts, while SPEC §10.1 places toasts top-right on desktop and at the bottom on mobile. The spec takes precedence; mobile toasts sit above the cart sheet so its actions stay clear.
 - **N1 product placeholders:** the backlog asks for type-specific Lucide icons and names; SPEC §10.1 specifies the gold EJ monogram. Placeholders keep the spec's monogram with the type icon and product name so they remain identifiable by type.
+- **Glass surfaces:** reserve glass for the login card, modal backdrops (6 px blur), toasts, and at most two small surfaces per screen. Do not use it on scrolling lists, tables, the cart, or product grids.
 
 - The repository has both `/SPEC.md` and `/docs/SPEC.md`; they are byte-identical. This session names `/docs/SPEC.md` as source of truth, so use it and keep the root copy untouched unless asked.
 - The source spec's recommended stack is explicitly an assumption and includes alternatives (Fastify, Drizzle, Jest, etc.); the session prompt fixes Express, Prisma, and Vitest. Follow the prompt's exact choices.

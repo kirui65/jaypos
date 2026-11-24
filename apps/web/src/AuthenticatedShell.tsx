@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "./styles.css";
 import ShellEntry from "./ShellEntry.js";
 
 export function mountShell(root: HTMLElement) {

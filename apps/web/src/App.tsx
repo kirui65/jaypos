@@ -1,9 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, cents, currencyInput, money, shopDate, shopDateTime, shopTime } from "./api.js";
 import { Icon } from "./Icons.js";
+import { CartPanelSkeleton, FormSkeleton, ProductGridSkeleton, TableSkeleton } from "./LoadingStates.js";
+import { ProgressiveImage } from "./ProgressiveImage.js";
+import { readLocal, writeLocal } from "./localCache.js";
+import { useDebouncedValue, useDelayedLoading } from "./useDelayedLoading.js";
 
 type AppUser = {
   id: string;
@@ -46,6 +50,7 @@ type Catalog = {
   products: Product[];
   bundles?: { bundleVariantId: string; componentVariantId: string; quantity: number }[];
 };
+type HeldCart = { id: string; label: string | null; createdAt: string; cartJson: { items: { variantId: string; quantity: number }[] } };
 type CartLine = { product: Product; variant: Variant; quantity: number };
 function availableUnits(catalog: Catalog | undefined, product: Product, variant: Variant): number {
   const allVariants = catalog?.products.flatMap((row) => row.variants) ?? [];
@@ -100,13 +105,28 @@ const useRefresh = (...keys: string[][]) => {
 function Button({
   children,
   className = "",
+  loading = false,
+  disabled,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { loading?: boolean }) {
   return (
-    <button className={`button ${className}`} {...props}>
-      {children}
+    <button className={`button ${loading ? "button-loading" : ""} ${className}`} disabled={disabled || loading} aria-busy={loading || undefined} {...props}>
+      <span className="button-label">{children}</span>{loading && <span className="spinner button-spinner" aria-label="Loading" />}
     </button>
   );
+}
+
+function RouteProgress() {
+  const location = useLocation();
+  const fetching = useIsFetching() > 0;
+  const [routeChanging, setRouteChanging] = useState(false);
+  const show = useDelayedLoading(fetching || routeChanging);
+  useEffect(() => {
+    setRouteChanging(true);
+    const timer = window.setTimeout(() => setRouteChanging(false), 180);
+    return () => window.clearTimeout(timer);
+  }, [location.key]);
+  return show ? <div className="route-progress" role="progressbar" aria-label="Loading content" /> : null;
 }
 function PageHeader({
   eyebrow,
@@ -193,7 +213,7 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
         <p className="login-kicker">RETAIL POINT OF SALE</p>
         <h1>Sign in to the till</h1>
         <p className="muted">Sign in to open your {brand.brandName} till.</p>
-        <form onSubmit={submit} className="stack-form">
+        <form onSubmit={submit} className="stack-form" inert={mutation.isPending || undefined}>
           <Field label="Username or email">
             <input
               autoComplete="username"
@@ -213,8 +233,8 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
             />
           </Field>
           <FormError value={mutation.error} />
-          <Button className="button-full button-lg" disabled={mutation.isPending}>
-            {mutation.isPending ? "Signing in…" : "Sign in"}
+          <Button className="button-full button-lg" loading={mutation.isPending}>
+            Sign in
           </Button>
         </form>
       </section>
@@ -241,6 +261,7 @@ function PasswordChange({ brand, onDone }: { brand: BrandSettings; onDone: () =>
         <p className="muted">Use at least 12 characters to secure your account.</p>
         <form
           className="stack-form"
+          inert={mutation.isPending || undefined}
           onSubmit={(e) => {
             e.preventDefault();
             mutation.mutate();
@@ -263,7 +284,7 @@ function PasswordChange({ brand, onDone }: { brand: BrandSettings; onDone: () =>
             />
           </Field>
           <FormError value={mutation.error} />
-          <Button className="button-full" disabled={mutation.isPending}>
+          <Button className="button-full" loading={mutation.isPending}>
             Save password
           </Button>
         </form>
@@ -302,6 +323,7 @@ function PageNotFound() {
 
 function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => void }) {
   const user = useUser();
+  const queryClient = useQueryClient();
   const [mobileMenu, setMobileMenu] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -332,6 +354,18 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
     items: section.items.filter((item) => user.permissions.includes(item.permission)),
   })).filter((section) => section.items.length > 0);
   const mobileItems = visibleSections.flatMap((section) => section.items).slice(0, 4);
+  function prefetchRoute(path: string) {
+    const requests: Record<string, () => Promise<unknown>> = {
+      "/": () => queryClient.prefetchQuery({ queryKey: ["catalog"], queryFn: () => api<Catalog>("/catalog") }),
+      "/shift": () => queryClient.prefetchQuery({ queryKey: ["current-shift"], queryFn: () => api("/shifts/current") }),
+      "/sales": () => queryClient.prefetchQuery({ queryKey: ["sales", user.role], queryFn: () => api(`/sales${user.role === "admin" ? "?scope=all" : ""}`) }),
+      "/stock": () => queryClient.prefetchQuery({ queryKey: ["stock"], queryFn: () => api("/stock") }),
+      "/refunds": () => queryClient.prefetchQuery({ queryKey: ["refunds"], queryFn: () => api("/refunds") }),
+      "/admin/catalog": () => queryClient.prefetchQuery({ queryKey: ["catalog"], queryFn: () => api<Catalog>("/catalog") }),
+      "/admin/staff": () => queryClient.prefetchQuery({ queryKey: ["staff"], queryFn: () => api("/auth/staff") }),
+    };
+    void requests[path]?.();
+  }
   return (
     <div className="app-shell">
       <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""} ${collapsed ? "sidebar-collapsed" : ""}`}>
@@ -354,6 +388,8 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
                   end={item.to === "/"}
                   onClick={() => setMobileMenu(false)}
                   className={({ isActive }) => `nav-link ${isActive ? "nav-active" : ""}`}
+                  onMouseEnter={() => prefetchRoute(item.to)}
+                  onFocus={() => prefetchRoute(item.to)}
                 >
                   <Icon name={item.icon} className="nav-glyph" />
                   <span className="nav-label">{item.label}</span>
@@ -416,6 +452,7 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
           </div>
         </header>
         <main className="content">
+          <RouteProgress />
           <Routes>
             <Route path="/" element={<POSPage />} />
             <Route path="/shift" element={<ShiftPage />} />
@@ -480,32 +517,39 @@ function RoleGate({ permission, children }: { permission: string; children: Reac
 
 function POSPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const {
     data: catalog,
     isPending,
     error,
-  } = useQuery({ queryKey: ["catalog"], queryFn: () => api<Catalog>("/catalog") });
-  const { data: currentShift } = useQuery({
+  } = useQuery({ queryKey: ["catalog"], queryFn: async () => {
+    const fresh = await api<Catalog>("/catalog");
+    void writeLocal("catalog", fresh).catch(() => undefined);
+    return fresh;
+  } });
+  useEffect(() => {
+    if (queryClient.getQueryData(["catalog"])) return;
+    let active = true;
+    void readLocal<Catalog>("catalog").then((cached) => {
+      if (active && cached && !queryClient.getQueryData(["catalog"])) queryClient.setQueryData(["catalog"], cached);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [queryClient]);
+  const { data: currentShift, isPending: shiftPending } = useQuery({
     queryKey: ["current-shift"],
     queryFn: () => api<{ shift: { id: string } | null }>("/shifts/current"),
   });
   const { data: heldCarts } = useQuery({
     queryKey: ["held-carts"],
-    queryFn: () =>
-      api<{
-        carts: {
-          id: string;
-          label: string | null;
-          createdAt: string;
-          cartJson: { items: { variantId: string; quantity: number }[] };
-        }[];
-      }>("/sales/held-carts"),
+    queryFn: () => api<{ carts: HeldCart[] }>("/sales/held-carts"),
   });
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 70);
   const [department, setDepartment] = useState("");
   const [type, setType] = useState("");
   const [showHeld, setShowHeld] = useState(false);
   const [holdError, setHoldError] = useState("");
+  const [holdPending, setHoldPending] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
   const searchRef = useRef<HTMLInputElement>(null);
   const [payOpen, setPayOpen] = useState(false);
@@ -524,14 +568,15 @@ function POSPage() {
             p.active &&
             (!department || p.department.id === department) &&
             (!type || p.productType.id === type) &&
-            (!search ||
+            (!debouncedSearch ||
               `${p.name} ${p.brand?.name ?? ""} ${p.variants.map((v) => `${v.sku} ${v.barcode ?? ""}`).join(" ")}`
                 .toLowerCase()
-                .includes(search.toLowerCase())),
+                .includes(debouncedSearch.toLowerCase())),
         )
         .flatMap((product) => product.variants.map((variant) => ({ product, variant }))),
-    [products, department, type, search],
+    [products, department, type, debouncedSearch],
   );
+  const showTillSkeleton = useDelayedLoading(isPending || shiftPending);
   const total = cart.reduce((sum, line) => sum + line.variant.priceCents * line.quantity, 0);
   const paymentStatus = useQuery({
     queryKey: ["payment-check", activePaymentId],
@@ -617,7 +662,10 @@ function POSPage() {
       return [...current, { product, variant, quantity: 1 }];
     });
   }
-  if (isPending) return <Loading label="Loading till" />;
+  if (isPending || shiftPending) {
+    if (!showTillSkeleton) return <div className="loading-reserve" aria-hidden="true" />;
+    return <div className="pos-skeleton-layout"><section className="pos-skeleton-browser"><span className="skeleton search-skeleton" /><span className="skeleton pos-skeleton-filters" /><span className="skeleton pos-skeleton-filters" /><ProductGridSkeleton /></section><CartPanelSkeleton /></div>;
+  }
   if (error)
     return (
       <>
@@ -699,7 +747,7 @@ function POSPage() {
                 >
                   <div className={`product-art product-art-${product.productType.code.toLowerCase()}`}>
                     {product.imageUrl ? (
-                      <img src={product.imageUrl} alt={`${product.name}`} width={166} height={166} />
+                      <ProgressiveImage src={product.imageUrl} alt={`${product.name}`} width={166} height={166} />
                     ) : (
                       <span className="product-placeholder">
                         <span className="placeholder-monogram">EJ</span>
@@ -775,7 +823,7 @@ function POSPage() {
             </div>
           )}
           {holdError && <Notice tone="error">{holdError}</Notice>}
-          <div className="cart-lines">
+          <div className="cart-lines" tabIndex={0} aria-label="Cart items">
             {cart.length === 0 ? (
               <div className="cart-empty">
                 <span><Icon name="cart" /></span>
@@ -849,29 +897,36 @@ function POSPage() {
           </Button>
           <button
             className="hold-button"
-            disabled={!cart.length}
+            disabled={!cart.length || holdPending}
             onClick={async () => {
+              if (!cart.length || holdPending) return;
+              const previousCart = cart;
+              const draftId = `pending-${Date.now()}`;
+              const draft: HeldCart = { id: draftId, label: shopTime(new Date()), createdAt: new Date().toISOString(), cartJson: { items: cart.map(({ variant, quantity }) => ({ variantId: variant.id, quantity })) } };
+              setHoldPending(true);
+              setCart([]);
+              queryClient.setQueryData<{ carts: HeldCart[] }>(["held-carts"], (current) => ({ carts: [draft, ...(current?.carts ?? [])] }));
               try {
                 await api("/sales/held-carts", {
                   method: "POST",
                   body: JSON.stringify({
-                    label: shopTime(new Date()),
-                    items: cart.map(({ variant, quantity }) => ({
-                      variantId: variant.id,
-                      quantity,
-                    })),
+                    label: draft.label,
+                    items: draft.cartJson.items,
                   }),
                 });
-                setCart([]);
+                queryClient.setQueryData<{ carts: HeldCart[] }>(["held-carts"], (current) => ({ carts: (current?.carts ?? []).filter((item) => item.id !== draftId) }));
                 refresh();
                 setHoldError("");
               } catch (e) {
-                saleMutation.reset();
+                setCart(previousCart);
+                queryClient.setQueryData<{ carts: HeldCart[] }>(["held-carts"], (current) => ({ carts: (current?.carts ?? []).filter((item) => item.id !== draftId) }));
                 setHoldError(e instanceof Error ? e.message : "Could not hold this cart. Try again.");
+              } finally {
+                setHoldPending(false);
               }
             }}
           >
-            Hold cart
+            {holdPending ? "Saving cart…" : "Hold cart"}
           </button>
           </div>
         </aside>
@@ -883,6 +938,7 @@ function POSPage() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="pay-title"
+            inert={saleMutation.isPending || undefined}
           >
             {!activePaymentId && (
               <button
@@ -1059,10 +1115,10 @@ function POSPage() {
                     </Notice>
                   )}
                 <FormError value={saleMutation.error} />
-                <Button
+          <Button
                   className="button-full button-lg"
+            loading={saleMutation.isPending}
                   disabled={
-                    saleMutation.isPending ||
                     (method === "cash" && cents(tender) < total) ||
                     (method === "mpesa_stk" && !phone.trim()) ||
                     (method === "split" &&
@@ -1074,9 +1130,7 @@ function POSPage() {
                   }
                   onClick={() => saleMutation.mutate()}
                 >
-                  {saleMutation.isPending
-                    ? "Processing…"
-                    : method === "cash"
+                  {method === "cash"
                       ? "Complete cash sale"
                       : method === "split"
                         ? "Pay cash + M-Pesa"
@@ -1141,6 +1195,7 @@ function ShiftPage() {
         } | null;
       }>("/shifts/current"),
   });
+  const showLoading = useDelayedLoading(isPending);
   const [amount, setAmount] = useState("");
   const [count, setCount] = useState("");
   const [reason, setReason] = useState("");
@@ -1175,7 +1230,7 @@ function ShiftPage() {
       refresh();
     },
   });
-  if (isPending) return <Loading />;
+  if (isPending) return showLoading ? <FormSkeleton /> : <div className="loading-reserve" aria-hidden="true" />;
   const shift = data?.shift;
   return (
     <>
@@ -1211,6 +1266,7 @@ function ShiftPage() {
           <p className="muted">Enter the cash float in your drawer before selling.</p>
           <form
             className="inline-form"
+            inert={mutation.isPending || undefined}
             onSubmit={(e) => {
               e.preventDefault();
               mutation.mutate({ path: "/shifts/open", data: { openingCashCents: cents(amount) } });
@@ -1226,7 +1282,7 @@ function ShiftPage() {
                 required
               />
             </Field>
-            <Button disabled={mutation.isPending}>Open shift</Button>
+            <Button loading={mutation.isPending}>Open shift</Button>
           </form>
         </section>
       ) : (
@@ -1253,6 +1309,7 @@ function ShiftPage() {
               <h2>Record cash in or out</h2>
               <form
                 className="stack-form"
+                inert={mutation.isPending || undefined}
                 onSubmit={(e) => {
                   e.preventDefault();
                   mutation.mutate({
@@ -1288,7 +1345,7 @@ function ShiftPage() {
                     required
                   />
                 </Field>
-                <Button disabled={mutation.isPending}>Save movement</Button>
+                <Button loading={mutation.isPending}>Save movement</Button>
               </form>
             </section>
             <section className="surface form-surface">
@@ -1298,6 +1355,7 @@ function ShiftPage() {
               </p>
               <form
                 className="stack-form"
+                inert={mutation.isPending || undefined}
                 onSubmit={(e) => {
                   e.preventDefault();
                   mutation.mutate({
@@ -1358,7 +1416,7 @@ function DataTable({
 }) {
   if (!rows.length) return <div className="table-empty"><Icon name="receipt" /><p>{empty}</p><Link className="text-button" to="/">Go to point of sale</Link></div>;
   return (
-    <div className="table-scroll">
+    <div className="table-scroll" tabIndex={0} aria-label="Scrollable data table">
       <table>
         <thead>
           <tr>
@@ -1393,6 +1451,7 @@ function SalesPage() {
     queryKey: ["sales", user.role],
     queryFn: () => api<{ sales: Sale[] }>(`/sales${user.role === "admin" ? "?scope=all" : ""}`),
   });
+  const showLoading = useDelayedLoading(isPending);
   const request = useMutation({
     mutationFn: () =>
       api("/refunds", {
@@ -1410,7 +1469,7 @@ function SalesPage() {
       void queryClient.invalidateQueries({ queryKey: ["refunds"] });
     },
   });
-  if (isPending) return <Loading />;
+  if (isPending) return showLoading ? <TableSkeleton /> : <div className="loading-reserve" aria-hidden="true" />;
   return (
     <>
       <PageHeader
@@ -1471,6 +1530,7 @@ function SalesPage() {
             <h2>{selected.receiptNo}</h2>
             <form
               className="stack-form"
+              inert={request.isPending || undefined}
               onSubmit={(e) => {
                 e.preventDefault();
                 request.mutate();
@@ -1504,7 +1564,7 @@ function SalesPage() {
                 </select>
               </Field>
               <FormError value={request.error} />
-              <Button className="button-full" disabled={request.isPending}>
+              <Button className="button-full" loading={request.isPending}>
                 Send refund request
               </Button>
             </form>
@@ -1560,6 +1620,7 @@ function StockPage() {
         }[];
       }>("/stock"),
   });
+  const showLoading = useDelayedLoading(isPending);
   const [variantId, setVariantId] = useState("");
   const [delta, setDelta] = useState("");
   const [stockReason, setStockReason] = useState("");
@@ -1581,7 +1642,7 @@ function StockPage() {
       void client.invalidateQueries({ queryKey: ["stock"] });
     },
   });
-  if (isPending) return <Loading />;
+  if (isPending) return showLoading ? <TableSkeleton /> : <div className="loading-reserve" aria-hidden="true" />;
   const rows = (data?.stock ?? []).filter(({ variant }) =>
     `${variant.product.name} ${variant.sku} ${variant.barcode ?? ""}`
       .toLowerCase()
@@ -1639,6 +1700,7 @@ function StockPage() {
             <p className="muted">Admin only. Every change is recorded in the stock ledger.</p>
             <form
               className="inline-form inline-form-wrap"
+              inert={adjustment.isPending || undefined}
               onSubmit={(e) => {
                 e.preventDefault();
                 adjustment.mutate();
@@ -1670,7 +1732,7 @@ function StockPage() {
                   required
                 />
               </Field>
-              <Button disabled={adjustment.isPending}>Post adjustment</Button>
+            <Button loading={adjustment.isPending}>Post adjustment</Button>
             </form>
             <FormError value={adjustment.error} />
           </section>
@@ -1731,6 +1793,7 @@ function RefundsPage() {
         }[];
       }>("/refunds"),
   });
+  const showLoading = useDelayedLoading(isPending);
   const client = useQueryClient();
   const [method, setMethod] = useState("cash");
   const [dispositions, setDispositions] = useState<Record<string, string>>({});
@@ -1760,7 +1823,7 @@ function RefundsPage() {
       void client.invalidateQueries({ queryKey: ["stock"] });
     },
   });
-  if (isPending) return <Loading />;
+  if (isPending) return showLoading ? <TableSkeleton columns={5} /> : <div className="loading-reserve" aria-hidden="true" />;
   return (
     <>
       <PageHeader
@@ -2069,6 +2132,7 @@ function StaffAdminPage() {
     queryKey: ["staff"],
     queryFn: () => api<{ staff: AppUser[] }>("/auth/staff"),
   });
+  const showLoading = useDelayedLoading(isPending);
   const client = useQueryClient();
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
@@ -2099,7 +2163,7 @@ function StaffAdminPage() {
       void client.invalidateQueries({ queryKey: ["staff"] });
     },
   });
-  if (isPending) return <Loading />;
+  if (isPending) return showLoading ? <TableSkeleton columns={5} /> : <div className="loading-reserve" aria-hidden="true" />;
   return (
     <>
       <PageHeader
@@ -2114,6 +2178,7 @@ function StaffAdminPage() {
           <h2>Add a staff member</h2>
           <form
             className="stack-form"
+            inert={create.isPending || undefined}
             onSubmit={(e) => {
               e.preventDefault();
               create.mutate();
@@ -2146,7 +2211,7 @@ function StaffAdminPage() {
                 onChange={(e) => setDiscount(e.target.value)}
               />
             </Field>
-            <Button disabled={create.isPending}>Create staff account</Button>
+            <Button loading={create.isPending}>Create staff account</Button>
           </form>
         </section>
         <section className="surface table-surface">
@@ -2178,6 +2243,7 @@ function CatalogAdminPage() {
     queryKey: ["catalog"],
     queryFn: () => api<Catalog>("/catalog"),
   });
+  const showLoading = useDelayedLoading(isPending);
   const client = useQueryClient();
   const [departmentId, setDepartmentId] = useState("");
   const [productTypeId, setProductTypeId] = useState("");
@@ -2245,7 +2311,7 @@ function CatalogAdminPage() {
       void client.invalidateQueries({ queryKey: ["stock"] });
     },
   });
-  if (isPending) return <Loading />;
+  if (isPending) return showLoading ? <FormSkeleton /> : <div className="loading-reserve" aria-hidden="true" />;
   return (
     <>
       <PageHeader
@@ -2258,6 +2324,7 @@ function CatalogAdminPage() {
       <section className="surface form-surface">
         <form
           className="catalog-form"
+          inert={create.isPending || undefined}
           onSubmit={(e) => {
             e.preventDefault();
             create.mutate();
@@ -2339,7 +2406,7 @@ function CatalogAdminPage() {
             <input value={attrs} onChange={(e) => setAttrs(e.target.value)} />
           </Field>
           <div className="catalog-submit">
-            <Button disabled={create.isPending}>Save product</Button>
+            <Button loading={create.isPending}>Save product</Button>
           </div>
         </form>
       </section>
@@ -2461,16 +2528,14 @@ export default function App() {
     document.title = `${routeTitles[route] ?? "Page not found"} | ${brandSettings.brandName}`;
   }, [location.pathname, brandSettings.brandName]);
   if (import.meta.env.DEV && window.location.pathname === "/design") return <DesignPage />;
-  if (isPending)
-    return (
-      <div className="app-loading">
-        <Loading label="Opening your shop" />
-      </div>
-    );
+  if (isPending) return <div className="app-loading auth-bootstrap-reserve" aria-hidden="true"><span className="skeleton auth-bootstrap-mark" /><span className="skeleton auth-bootstrap-line" /></div>;
   const user = data?.user;
   if (!user)
     return (
-      <LoginPage brand={brandSettings} onLogin={(nextUser) => queryClient.setQueryData(["me"], { user: nextUser })} />
+      <LoginPage brand={brandSettings} onLogin={(nextUser) => {
+        queryClient.setQueryData(["me"], { user: nextUser });
+        void queryClient.prefetchQuery({ queryKey: ["catalog"], queryFn: async () => { const fresh = await api<Catalog>("/catalog"); void writeLocal("catalog", fresh).catch(() => undefined); return fresh; } });
+      }} />
     );
   if (user.mustChangePassword)
     return (
