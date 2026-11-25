@@ -368,7 +368,7 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
   const user = useUser();
   const queryClient = useQueryClient();
   const [mobileMenu, setMobileMenu] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const { data: shiftState } = useQuery({
@@ -396,7 +396,11 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
     ...section,
     items: section.items.filter((item) => user.permissions.includes(item.permission)),
   })).filter((section) => section.items.length > 0);
-  const mobileItems = visibleSections.flatMap((section) => section.items).slice(0, 4);
+  const navItems = visibleSections.flatMap((section) => section.items);
+  const desktopItems = navItems.slice(0, user.role === "admin" ? 6 : 5);
+  const desktopMoreItems = navItems.slice(desktopItems.length);
+  const mobileItems = navItems.slice(0, 4);
+  const mobileMoreItems = navItems.slice(mobileItems.length);
   function prefetchRoute(path: string) {
     const requests: Record<string, () => Promise<unknown>> = {
       "/": () => queryClient.prefetchQuery({ queryKey: ["catalog"], queryFn: () => api<Catalog>("/catalog") }),
@@ -410,73 +414,56 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
     };
     void requests[path]?.();
   }
+  function navLink(item: (typeof navItems)[number]) {
+    return (
+      <NavLink
+        key={item.to}
+        to={item.to}
+        end={item.to === "/"}
+        onClick={() => {
+          setMobileMenu(false);
+          setMoreMenuOpen(false);
+        }}
+        className={({ isActive }) => `nav-link ${isActive ? "nav-active" : ""}`}
+        onMouseEnter={() => prefetchRoute(item.to)}
+        onFocus={() => prefetchRoute(item.to)}
+      >
+        <Icon name={item.icon} className="nav-glyph" />
+        <span>{item.label}</span>
+      </NavLink>
+    );
+  }
   return (
     <div className="app-shell">
-      <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""} ${collapsed ? "sidebar-collapsed" : ""}`}>
-        <Link to="/" className="brand-lockup" onClick={() => setMobileMenu(false)}>
-          {brand.logoUrl && <img className="brand-logo" src={brand.logoUrl} alt="" />}
-          <span>
-            <b className="nav-label">{brand.brandName}</b>
-            <small>RETAIL POS</small>
-          </span>
-        </Link>
-        <button className="sidebar-collapse" aria-label={collapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => setCollapsed((value) => !value)}><Icon name={collapsed ? "menu" : "layout"} /></button>
-        <nav className="main-nav">
-          {visibleSections.map((section) => (
-            <div className="nav-group" key={section.label}>
-              <div className="nav-section-label">{section.label}</div>
-              {section.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.to === "/"}
-                  onClick={() => setMobileMenu(false)}
-                  className={({ isActive }) => `nav-link ${isActive ? "nav-active" : ""}`}
-                  onMouseEnter={() => prefetchRoute(item.to)}
-                  onFocus={() => prefetchRoute(item.to)}
-                >
-                  <Icon name={item.icon} className="nav-glyph" />
-                  <span className="nav-label">{item.label}</span>
-                </NavLink>
-              ))}
-            </div>
-          ))}
-          <div className="nav-group system-nav-group">
-            <div className="nav-section-label">System</div>
-            <button className="nav-link system-signout" onClick={onLogout}><Icon name="logout" className="nav-glyph" /><span className="nav-label">Sign out</span></button>
-          </div>
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="user-mini">
-            <span className="avatar">{user.name.slice(0, 1).toUpperCase()}</span>
+        <header className="topbar app-header">
+          <Link to="/" className="brand-lockup" onClick={() => setMobileMenu(false)}>
+            {brand.logoUrl ? <img className="brand-logo" src={brand.logoUrl} alt="" /> : <span className="brand-monogram" aria-hidden="true"><Icon name="cart" /></span>}
             <span>
-              <b>{user.name}</b>
-              <small>{user.role === "admin" ? "Administrator" : "Staff member"}</small>
+              <b>{brand.brandName}</b>
+              <small>{user.role === "admin" ? "OWNER DASHBOARD" : "RETAIL POS"}</small>
             </span>
-          </div>
-        </div>
-      </aside>
-      {mobileMenu && (
-        <button
-          className="mobile-backdrop"
-          aria-label="Close navigation"
-          onClick={() => setMobileMenu(false)}
-        />
-      )}
-      <div className="app-main">
-        <header className="topbar">
+          </Link>
           <button
             className="menu-toggle"
-            aria-label="Open navigation"
-            onClick={() => setMobileMenu(!mobileMenu)}
+            aria-label={mobileMenu ? "Close navigation" : "Open navigation"}
+            aria-expanded={mobileMenu}
+            onClick={() => setMobileMenu((open) => !open)}
           >
-            <Icon name="menu" />
+            <Icon name={mobileMenu ? "x" : "menu"} />
+            <span>Menu</span>
           </button>
-          <div className="topbar-title">
-            <span className="topbar-brand">{brand.brandName}</span>
-            <span aria-hidden="true">/</span>
-            <span className="topbar-role">{APP_ROUTE_TITLES[location.pathname] ?? (user.role === "admin" ? "Admin workspace" : "Staff till")}</span>
-          </div>
+          <nav className={`main-nav ${mobileMenu ? "nav-open" : ""}`} aria-label="Main navigation">
+            {(mobileMenu ? navItems : desktopItems).map((item) => navLink(item))}
+            {!mobileMenu && desktopMoreItems.length > 0 && (
+              <div className="more-nav-wrap">
+                <button className={`nav-link more-nav-trigger ${moreMenuOpen ? "nav-active" : ""}`} aria-expanded={moreMenuOpen} onClick={() => setMoreMenuOpen((open) => !open)}>
+                  <Icon name="menu" className="nav-glyph" />
+                  <span>More</span>
+                </button>
+                {moreMenuOpen && <div className="more-nav-popover">{desktopMoreItems.map((item) => navLink(item))}</div>}
+              </div>
+            )}
+          </nav>
           <div className="topbar-right">
             <span className={`connectivity-indicator ${online ? "" : "connectivity-offline"}`} role="status" aria-label={online ? "Online" : "Offline"}>
               <Icon name={online ? "wifi" : "wifi-off"} />
@@ -495,7 +482,9 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
             </div>
           </div>
         </header>
-        <main className="content">
+        {mobileMenu && <button className="mobile-backdrop" aria-label="Close navigation" onClick={() => setMobileMenu(false)} />}
+        <div className="app-main">
+          <main className="content">
           <RouteProgress />
           <Routes>
             <Route path="/" element={<POSPage />} />
@@ -537,15 +526,21 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
             />
             <Route path="*" element={<PageNotFound />} />
           </Routes>
-        </main>
-      </div>
-      <nav className="mobile-tabbar" aria-label="Primary navigation">
+          </main>
+        </div>
+      <nav className="mobile-tabbar" aria-label="Quick navigation">
         {mobileItems.map((item) => (
-          <NavLink key={item.to} to={item.to} end={item.to === "/"} aria-label={item.label}>
+          <NavLink key={item.to} to={item.to} end={item.to === "/"} aria-label={item.label} onClick={() => setMoreMenuOpen(false)}>
             <Icon name={item.icon} />
             <span>{item.label}</span>
           </NavLink>
         ))}
+        {mobileMoreItems.length > 0 && (
+          <div className="mobile-more-wrap">
+            <button className={moreMenuOpen ? "nav-active" : ""} aria-expanded={moreMenuOpen} onClick={() => setMoreMenuOpen((open) => !open)}><Icon name="menu" /><span>More</span></button>
+            {moreMenuOpen && <div className="mobile-more-popover">{mobileMoreItems.map((item) => navLink(item))}</div>}
+          </div>
+        )}
       </nav>
     </div>
   );
@@ -819,42 +814,54 @@ function POSPage() {
               const available = availableUnits(catalog, product, variant);
               const inCart = cart.find((line) => line.variant.id === variant.id)?.quantity ?? 0;
               return (
-                <button
+                <article
                   key={variant.id}
-                  className="product-card"
+                  className={`product-card ${inCart > 0 ? "product-selected" : ""}`}
                   data-testid="product-card"
-                  disabled={available <= 0 || inCart >= available}
-                  onClick={() => addToCart(product, variant)}
                 >
-                  <div className={`product-art product-art-${product.productType.code.toLowerCase()}`}>
-                    <span className="product-placeholder" aria-hidden={product.imageUrl ? "true" : undefined}>
-                      <span className="placeholder-monogram">EJ</span>
-                      <Icon className="product-type-icon" name={productTypeIcon(product.productType.code)} />
-                      <small>{product.name}</small>
-                    </span>
-                    {product.imageUrl && (
-                      <ProgressiveImage
-                        src={resolveCatalogImage(product.imageUrl)}
-                        alt={`${product.name}`}
-                        width={240}
-                        height={240}
-                        {...(product.imageUrl.startsWith("/api/")
-                          ? { crossOrigin: "use-credentials" as const }
-                          : {})}
-                      />
-                    )}
-                    <span className={`stock-badge ${available <= 0 ? "stock-empty" : available <= 5 ? "stock-low" : ""}`}>{available <= 0 ? "Out of stock" : available <= 5 ? `${available} left` : `${available} in stock`}</span>
-                    {inCart > 0 && <span className="product-qty-badge" aria-label={`${inCart} in cart`}>{inCart}</span>}
-                  </div>
-                  <div className="product-card-body">
-                    <span className="product-brand">
-                      {product.brand?.name ?? product.productType.name}
-                    </span>
-                    <b>{product.name}</b>
-                    <span className="variant-chips">{Object.entries(variant.attributes ?? {}).filter(([,value]) => value !== null && value !== undefined && String(value).trim() !== "").slice(0, 3).map(([key,value]) => <span className="variant-chip" key={key}>{formatVariant(key, value)}</span>)}</span>
+                  <button className="product-card-main" disabled={available <= inCart} onClick={() => addToCart(product, variant)} aria-label={`Add ${product.name}`}>
+                    <div className={`product-art product-art-${product.productType.code.toLowerCase()}`}>
+                      <span className="product-placeholder" aria-hidden={product.imageUrl ? "true" : undefined}>
+                        <Icon className="product-type-icon" name={productTypeIcon(product.productType.code)} />
+                        <small>{product.name}</small>
+                      </span>
+                      {product.imageUrl && (
+                        <ProgressiveImage
+                          src={resolveCatalogImage(product.imageUrl)}
+                          alt={`${product.name}`}
+                          width={240}
+                          height={240}
+                          {...(product.imageUrl.startsWith("/api/")
+                            ? { crossOrigin: "use-credentials" as const }
+                            : {})}
+                        />
+                      )}
+                      {available <= 0 && <span className="stock-badge stock-empty">Out of stock</span>}
+                      {available > 0 && available <= 5 && <span className="stock-badge stock-low">{available} left</span>}
+                    </div>
+                    <div className="product-card-body">
+                      <span className="product-brand">
+                        {product.brand?.name ?? product.productType.name}
+                      </span>
+                      <b title={product.name}>{product.name}</b>
+                      <span className="variant-chips">{Object.entries(variant.attributes ?? {}).filter(([,value]) => value !== null && value !== undefined && String(value).trim() !== "").slice(0, 3).map(([key,value]) => <span className="variant-chip" key={key}>{formatVariant(key, value)}</span>)}</span>
+                    </div>
+                  </button>
+                  <div className="product-card-action">
                     <strong>{money(variant.priceCents)}</strong>
+                    {inCart > 0 ? (
+                      <div className="product-stepper" aria-label={`${inCart} in cart`}>
+                        <button aria-label={`Remove one ${product.name}`} onClick={() => {
+                          setCart((rows) => rows.flatMap((row) => row.variant.id !== variant.id ? [row] : row.quantity > 1 ? [{ ...row, quantity: row.quantity - 1 }] : []));
+                        }}><Icon name="minus" /></button>
+                        <span>{inCart}</span>
+                        <button aria-label={`Add one ${product.name}`} disabled={inCart >= available} onClick={() => addToCart(product, variant)}><Icon name="plus" /></button>
+                      </div>
+                    ) : available > 0 ? (
+                      <button className="product-add" aria-label={`Add ${product.name}`} onClick={() => addToCart(product, variant)}>Add</button>
+                    ) : null}
                   </div>
-                </button>
+                </article>
               );
             })}
           </div>
@@ -864,12 +871,9 @@ function POSPage() {
         </section>
         <aside className="cart-panel">
           <div className="cart-title">
-            <div>
-              <p className="eyebrow eyebrow-gold">CURRENT SALE</p>
-              <h2>Your cart</h2>
-            </div>
+            <h2>Your order</h2>
             <button className="cart-clear" onClick={() => setCart([])} disabled={!cart.length}>
-              Clear
+              Clear all
             </button>
           </div>
           <button className="held-toggle" onClick={() => setShowHeld(!showHeld)}>
@@ -915,8 +919,7 @@ function POSPage() {
             {cart.length === 0 ? (
               <div className="cart-empty">
                 <span><Icon name="cart" /></span>
-                <p>Add an item to begin</p>
-                <small>Your selections will appear here.</small>
+                <p>Your cart is empty. Tap Add on anything you like.</p>
               </div>
             ) : (
               cart.map((line) => (
@@ -966,8 +969,9 @@ function POSPage() {
           <div className="cart-summary">
             <div>
               <span>Subtotal</span>
-              <b>{money(total)}</b>
+              <b>{money(subtotal)}</b>
             </div>
+            {taxCents > 0 && <div><span>VAT</span><b>{money(taxCents)}</b></div>}
             <div className="grand-total">
               <span>Total due</span>
               <b>{money(total)}</b>

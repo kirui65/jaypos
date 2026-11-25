@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#14243A" />
+    <meta name="theme-color" content="#0B0B0B" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Retail point of sale</title>
   </head>
@@ -11,10 +11,12 @@
     <div id="root">
       <main class="login-page">
         <div class="login-backdrop" aria-hidden="true"></div>
-        <section class="login-card" aria-labelledby="login-title">
-          <img id="login-logo" class="login-logo" alt="Shop logo" width="220" height="220" fetchpriority="high" hidden />
+        <section class="login-brand-panel" aria-label="Shop branding">
+          <img id="login-logo" class="login-logo" alt="Shop logo" width="320" height="320" fetchpriority="high" hidden />
           <div class="gold-rule"></div>
           <p class="login-brand-name" data-brand-name>Shop</p>
+        </section>
+        <section class="login-card" aria-labelledby="login-title">
           <p class="login-kicker">RETAIL POINT OF SALE</p>
           <h1 id="login-title">Sign in to the till</h1>
           <p class="muted">Sign in to open your shop till.</p>

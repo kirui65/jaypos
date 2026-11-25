@@ -33,25 +33,23 @@ const VIEWPORTS = [
   { name: 'laptop', width: 1280, height: 720 },
 ];
 
-// Design rules from the spec (section 10.1). Keep in sync with the tokens file.
+// Design rules from the current retail style guide. Keep in sync with the tokens file.
 const PALETTE_HEX = [
-  '14243A', '1A2B40', '1D3858', '2B4A6D', '173452', // navy surfaces
-  '2864C5', '356FB8', '1D4F91', 'EAF2FB', // blue accents
-  'F2C94C', 'F7D978', '745900', 'FFF7DC', // warm yellow accents
-  'FFFFFF', 'F5F8FC', 'DCE5EF', '596A7E', // neutrals
-  'D5E0EC', 'B6C5D6', 'C8D4E1', // softer text on dark surfaces
-  '92928B', '205D26', '80540C', 'BECBD9', 'FFeded', '627D9A', // muted, control and status tokens
-  'A91F1F', '7F1919', 'FFF0F0', 'EDF5ED', 'E8F3E9', '9F2424', // status tokens
-  '2E7D32', 'B26A00', 'C62828',           // status
-  'E8F3E9', 'FBEFD9', 'FBE7E7',           // status washes
+  '0B0B0B', '1A1A19', '252522', '383833', '24231F', // black surfaces
+  'C9A227', 'E2C65F', '8A6D1A', 'F7EFD5', // gold accents
+  'FFFFFF', 'F7F6F2', 'E7E3D6', '6B6B66', // paper and text
+  'C4C3BD', 'DEDDD7', 'C9C6BC', 'EBE9E1', '858279', '92928B', // neutral controls
+  '2E7D32', 'E8F3E9', '205D26', 'EDF5ED', // success
+  'B26A00', '80540C', 'FFF7DC', // warning
+  'C62828', 'A91F1F', '9F2424', '7F1919', 'FFeded', 'FFF0F0', // danger
 ];
 const PALETTE = PALETTE_HEX.map((hex) => (hex.match(/../g) as string[]).map((h) => parseInt(h, 16)).join(','));
-const TYPE_SCALE_PX = [12, 14, 16, 18, 20, 24, 30, 36];
+const TYPE_SCALE_PX = [12, 14, 16, 18, 20, 22, 24, 28, 32];
 const ALLOWED_FONTS = new RegExp(
   process.env.E2E_ALLOWED_FONTS ?? '^(EJ Sans|EJ Serif|Noto Sans|Noto Serif|ui-monospace|monospace|JetBrains Mono|system-ui|Georgia)$',
   'i',
 );
-const MIN_TARGET_PX = 40; // the spec asks for 44; 40 allows for rounding
+const MIN_TARGET_PX = 44;
 
 fs.mkdirSync('audit/screenshots', { recursive: true });
 
@@ -338,4 +336,132 @@ test('POS feels instant: tapping a product puts it in the cart quickly', async (
   await page.getByTestId('cart-line').first().waitFor();
   const elapsed = Date.now() - start;
   expect(elapsed, 'milliseconds from tap to cart line').toBeLessThan(150);
+});
+
+test('POS restyle fits phone, tablet, and desktop with a mock shop session', async ({ page }) => {
+  const products = [
+    'Amber Woods', 'Cedar Coast', 'Golden Hour', 'Soft Linen',
+    'Night Garden', 'Citrus Market', 'Warm Vanilla', 'Clear Sky',
+  ].map((name, index) => ({
+    id: `product-${index + 1}`,
+    name,
+    active: true,
+    imageUrl: null,
+    department: { id: 'department-fragrance', name: 'Fragrance', code: 'fragrance' },
+    productType: { id: 'type-perfumes', name: 'Perfume', code: 'perfumes' },
+    brand: { name: 'Test Brand' },
+    variants: [{
+      id: `variant-${index + 1}`,
+      sku: `TEST-${index + 1}`,
+      barcode: null,
+      attributes: { volume_ml: 100, concentration: 'EDP' },
+      priceCents: 850000 + index * 10000,
+      stock: 8,
+      mlRemaining: null,
+      isBulk: false,
+      bulkVolumeMl: null,
+      parentBulkVariantId: null,
+      mlPerUnit: null,
+    }],
+  }));
+
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const payload = path.endsWith('/brand')
+      ? { brandName: 'Test Shop', logoUrl: null }
+      : path.endsWith('/auth/me')
+        ? { user: {
+            id: 'mock-admin',
+            name: 'Test Administrator',
+            username: 'test-admin',
+            role: 'admin',
+            permissions: ['sales.create', 'sales.read.own', 'sales.read.all', 'stock.read', 'refunds.request', 'catalog.manage', 'staff.manage'],
+            mustChangePassword: false,
+            discountLimitPct: 10,
+            active: true,
+          } }
+        : path.endsWith('/shifts/current')
+          ? { shift: { id: 'mock-shift' } }
+          : path.endsWith('/catalog')
+            ? {
+                departments: [{ id: 'department-fragrance', name: 'Fragrance', code: 'fragrance' }],
+                productTypes: [{ id: 'type-perfumes', name: 'Perfume', code: 'perfumes' }],
+                brands: [{ id: 'brand-test', name: 'Test Brand' }],
+                products,
+                taxSettings: { enabled: false, rateBps: 0, inclusive: false },
+              }
+            : path.endsWith('/sales/held-carts')
+              ? { carts: [] }
+              : { ok: true };
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payload) });
+  });
+
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  await expect(page.getByTestId('product-card').first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('heading', { name: 'Your order' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Pay ·/ })).toBeInViewport();
+  const serifAppText = await page.locator('.app-shell *').evaluateAll((elements) =>
+    elements
+      .filter((element) => Array.from(element.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').trim()))
+      .filter((element) => /ej serif|noto serif|georgia/i.test(getComputedStyle(element).fontFamily.split(',')[0]))
+      .map((element) => element.textContent?.trim().slice(0, 40)),
+  );
+  expect(serifAppText, 'the authenticated app uses sans-serif typography').toEqual([]);
+  await page.screenshot({ path: 'audit/screenshots/restyle-pos-empty-1366x768.png' });
+
+  const firstProduct = page.getByTestId('product-card').first();
+  await page.evaluate(() => {
+    document.addEventListener('pointerdown', (event) => {
+      if (!(event.target instanceof Element) || !event.target.closest('.product-card-main')) return;
+      const cart = document.querySelector('.cart-lines');
+      if (!cart) return;
+      const started = performance.now();
+      const observer = new MutationObserver(() => {
+        if (!document.querySelector('[data-testid="cart-line"]')) return;
+        document.documentElement.dataset.cartRenderMs = String(performance.now() - started);
+        observer.disconnect();
+      });
+      observer.observe(cart, { childList: true, subtree: true });
+    }, { capture: true, once: true });
+  });
+  await firstProduct.click();
+  await expect(page.getByTestId('cart-line').first()).toBeVisible();
+  const cartRenderMs = await page.evaluate(() => Number(document.documentElement.dataset.cartRenderMs));
+  expect(cartRenderMs, 'time from pointer-down to cart update').toBeLessThan(150);
+  await page.screenshot({ path: 'audit/screenshots/restyle-pos-filled-1366x768.png' });
+
+  for (const viewport of [
+    { name: 'tablet', width: 1024, height: 768 },
+    { name: 'phone', width: 360, height: 740 },
+  ]) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await expect(firstProduct).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow, `${viewport.name} has no horizontal overflow`).toBeLessThanOrEqual(1);
+    const undersizedTargets = await page.evaluate((min) =>
+      Array.from(document.querySelectorAll<HTMLElement>('button, a[href], [role="button"], input:not([type=hidden]), select'))
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && !element.closest('p') &&
+            (rect.width < min || rect.height < min);
+        })
+        .map((element) => {
+          const rect = element.getBoundingClientRect();
+          return `${element.tagName.toLowerCase()} ${element.getAttribute('aria-label') ?? element.textContent?.trim()} ${Math.round(rect.width)}x${Math.round(rect.height)}`;
+        }),
+      MIN_TARGET_PX,
+    );
+    expect(undersizedTargets, `${viewport.name} targets are at least ${MIN_TARGET_PX}px`).toEqual([]);
+    if (viewport.name === 'tablet') {
+      const menu = page.getByRole('button', { name: 'Open navigation' });
+      await expect(menu).toBeVisible();
+      await menu.click();
+      await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Catalog' })).toBeVisible();
+      await page.locator('.app-header .menu-toggle').click();
+    } else {
+      await expect(page.getByRole('navigation', { name: 'Quick navigation' })).toBeVisible();
+    }
+    await page.screenshot({ path: `audit/screenshots/restyle-pos-${viewport.name}.png` });
+  }
 });

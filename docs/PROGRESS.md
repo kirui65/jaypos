@@ -2,6 +2,13 @@
 
 Last updated: 2026-11-26
 
+## Restyle and tablet pass handoff (2026-11-26)
+
+- Replaced the sidebar with a settings-branded black top bar, role-aware desktop navigation, a tablet menu, and phone bottom tabs. Restyled the public sign-in page and POS in black, gold, white, and paper tones.
+- Reworked product cards and cart controls for touch use, kept the desktop order panel pinned, and adapted the cart to a phone bottom sheet. Added responsive POS screenshots at phone, tablet, and desktop sizes.
+- Typecheck, lint, tests, and production web build passed. The full audit found one phone hit-area assertion on the brand link and More tab; both controls were enlarged, then the focused phone/tablet/desktop POS Playwright test passed. The full audit was not rerun after that small CSS fix. Authenticated API-backed route checks and API load checks need configured credentials/services.
+- **Next:** N10 offline sync, then N15 quotations as a single-shop feature, then the remaining backlog.
+
 ## Single-shop tenant-ready foundation handoff (2026-11-26)
 
 - Kept the product scoped to one shop. N16 multi-tenancy, signup, billing, and the platform console are deferred until a second shop is signed; N15 quotations remain a single-shop feature. The active order is restyle and tablet pass, N10 offline, N15 quotations, then the remaining backlog.

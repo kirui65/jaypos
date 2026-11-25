@@ -46,3 +46,111 @@ button:disabled { cursor: not-allowed; }
 @media (max-width: 850px) { .login-page { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(150px, 24dvh) minmax(0, 1fr); overflow: hidden; } .login-brand-panel { padding: 12px; } .login-brand-panel .login-logo { width: min(26dvh, 125px); } .login-brand-panel .gold-rule { margin: 8px auto 4px; } .login-brand-panel p { font-size: 18px; } .login-card { width: 100%; height: auto; min-height: 0; padding: 18px 24px 24px; border-radius: var(--ej-radius-lg) var(--ej-radius-lg) 0 0; } }
 @media (max-width: 640px) { body.public-login { font-family: var(--ej-font-ui-fast); } body.public-login .login-brand-name { font-family: var(--ej-font-display-fast); } .login-page { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); padding: 20px; } .login-card { width: min(100%, 420px); padding: 24px; border-radius: var(--ej-radius-lg); -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--ej-login-glass); } .login-card .login-logo { width: 48px; } .login-page h1, .login-brand-panel p { font-family: var(--ej-font-display-fast); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none; transition: none; scroll-behavior: auto; } .login-backdrop canvas { display: none; } }
+
+/* Retail restyle: a white sign-in card beside the shop's configured brand. */
+.login-page {
+  grid-template-columns: minmax(0, 1fr) minmax(420px, .85fr);
+  gap: clamp(24px, 6vw, 88px);
+  align-items: center;
+  justify-items: stretch;
+  padding: 48px clamp(24px, 7vw, 100px);
+}
+.login-brand-panel {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  padding: 24px;
+  color: var(--ej-white);
+  background: transparent;
+  text-align: center;
+}
+.login-brand-panel .login-logo {
+  width: min(300px, 32vw);
+  height: auto;
+  margin: 0 auto;
+  border-radius: 50%;
+  object-fit: contain;
+}
+.login-logo[hidden] { display: none; }
+.login-brand-panel .gold-rule { margin: 20px auto 12px; }
+.login-brand-panel p,
+.login-brand-name {
+  margin: 0;
+  color: var(--ej-white);
+  font-family: var(--ej-font-display);
+  font-size: 24px;
+  font-weight: 400;
+  text-align: center;
+}
+.login-card {
+  width: min(100%, 440px);
+  height: auto;
+  min-height: 0;
+  justify-self: center;
+  padding: 36px;
+  border: 1px solid var(--ej-line);
+  border-radius: var(--ej-radius-lg);
+  color: var(--ej-ink);
+  background: var(--ej-white);
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.login-card .login-logo { display: none; }
+.login-card .login-kicker { color: var(--ej-gold-deep); }
+.login-card h1 {
+  margin: 8px 0;
+  color: var(--ej-ink);
+  font-family: var(--ej-font-ui);
+  font-size: 28px;
+  font-weight: 700;
+  text-align: left;
+}
+.login-card > .muted { color: var(--ej-muted); text-align: left; }
+.login-card .field { color: var(--ej-ink); font-size: 14px; }
+.login-card .field input,
+.login-card .field select,
+.login-card .field textarea {
+  min-height: 44px;
+  border-color: var(--ej-line);
+  color: var(--ej-ink);
+  background: var(--ej-white);
+  font-size: 14px;
+}
+.login-card .field input::placeholder { color: var(--ej-muted); }
+.login-card .field input:focus { border-color: var(--ej-gold-deep); outline-color: var(--ej-gold-deep); }
+.login-card .button {
+  min-height: 52px;
+  border-color: var(--ej-gold);
+  border-radius: 999px;
+  color: var(--ej-black);
+  background: var(--ej-gold);
+  font-size: 16px;
+}
+.login-card .button:hover { color: var(--ej-black); background: var(--ej-gold-soft); }
+.login-card .button:active { color: var(--ej-white); background: var(--ej-gold-deep); }
+
+@media (max-width: 850px) {
+  .login-page {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 0;
+    padding: 16px 16px 0;
+  }
+  .login-brand-panel { min-height: 150px; padding: 12px; }
+  .login-brand-panel .login-logo { width: min(18dvh, 120px); }
+  .login-brand-panel .gold-rule { margin: 8px auto; }
+  .login-brand-panel p,
+  .login-brand-name { font-size: 20px; }
+  .login-card { width: min(100%, 560px); justify-self: center; padding: 28px; }
+}
+@media (max-width: 640px) {
+  .login-page { grid-template-rows: minmax(0, 1fr) auto; padding: 12px 12px 0; }
+  .login-brand-panel { min-height: 140px; padding: 8px; }
+  .login-brand-panel .login-logo { width: min(15dvh, 92px); }
+  .login-brand-panel p,
+  .login-brand-name { font-family: var(--ej-font-display-fast); font-size: 18px; }
+  .login-card { width: 100%; max-width: none; padding: 22px 20px max(22px, env(safe-area-inset-bottom)); border-radius: var(--ej-radius-lg) var(--ej-radius-lg) 0 0; }
+  .login-card h1 { font-family: var(--ej-font-ui-fast); font-size: 24px; }
+}
+@media (prefers-reduced-motion: reduce) { .login-card, .login-backdrop canvas { transition: none; } }

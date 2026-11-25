@@ -1,5 +1,11 @@
 # UI changelog
 
+## 2026-11-26 — Black, gold, white POS and tablet navigation
+
+- Replaced the sidebar with a settings-branded black top bar, role-aware navigation, a tablet menu, and phone bottom tabs. Updated the login and authenticated app typography and palette.
+- Refined the POS into a scrollable product grid with a pinned desktop order panel, touch-sized product/cart controls, and a phone cart sheet. Added mocked layout checks for phone, tablet, and desktop.
+- Screenshots: [desktop empty cart](../audit/screenshots/restyle-pos-empty-1366x768.png), [desktop with item](../audit/screenshots/restyle-pos-filled-1366x768.png), [tablet](../audit/screenshots/restyle-pos-tablet.png), [phone](../audit/screenshots/restyle-pos-phone.png).
+
 ## 2026-11-24 — White, blue, and warm yellow POS theme
 
 - Replaced the gold-on-black palette with bright white/cool-white page surfaces, blue actions and selected states, a deep navy sidebar/cart, and warm yellow sale-total accents.
