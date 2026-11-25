@@ -1,5 +1,8 @@
 import express from "express";
 import compression from "compression";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { authRouter } from "./auth/routes.js";
 import { requireAuth } from "./auth/middleware.js";
@@ -17,6 +20,25 @@ const healthResponseSchema = z.object({
   status: z.literal("ok"),
   service: z.literal("retail-pos-api"),
 });
+
+const webDistDirectory = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../web/dist",
+);
+const webContentSecurityPolicy = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "img-src 'self' data: blob: https:",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "manifest-src 'self'",
+  "worker-src 'self' blob:",
+].join("; ");
 
 export function createApp() {
   const app = express();
@@ -84,5 +106,21 @@ export function createApp() {
   app.use("/api/shifts", shiftsRouter);
   app.use("/api/refunds", refundsRouter);
   app.use("/api/payments", createPaymentsRouter(paymentProvider));
+
+  if (process.env.NODE_ENV === "production" && existsSync(webDistDirectory)) {
+    app.use(express.static(webDistDirectory, {
+      setHeaders: (response) => {
+        response.setHeader("Content-Security-Policy", webContentSecurityPolicy);
+      },
+    }));
+    app.get("*", (request, response, next) => {
+      if (request.path === "/api" || request.path.startsWith("/api/")) return next();
+      response.setHeader("Content-Security-Policy", webContentSecurityPolicy);
+      return response.sendFile(path.join(webDistDirectory, "index.html"), (error) => {
+        if (error) next(error);
+      });
+    });
+  }
+
   return app;
 }

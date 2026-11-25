@@ -1,7 +1,9 @@
 import "./tokens.css";
 import "./login.css";
 
-const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:3001").replace(/\/$/, "");
+const API_URL = (
+  import.meta.env.VITE_API_URL ?? (import.meta.env.PROD ? "" : "http://localhost:3001")
+).replace(/\/$/, "");
 const root = document.getElementById("root")!;
 const form = document.getElementById("login-form") as HTMLFormElement;
 const errorBox = document.getElementById("login-error")!;
