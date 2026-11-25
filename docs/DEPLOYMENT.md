@@ -1,13 +1,12 @@
 # Deployment
 
-The Render web service serves both the Vite app and Express API from the same HTTPS origin. PostgreSQL stays in the linked Supabase project. `render.yaml` is the service configuration; database URLs and the initial admin password are set as Render secrets.
+The Render web service serves both the Vite app and Express API from the same HTTPS origin. PostgreSQL stays in the linked Supabase project. The public repo is [kirui65/jaypos](https://github.com/kirui65/jaypos) and the Render URL is https://jaypos-oqmo.onrender.com. The service is created with automatic deploys disabled until database settings are complete.
 
 ## Initial setup
 
-1. Create the public GitHub repository `kirui65/jaypos` and push the `main` branch.
-2. Create the Render service from that repository using `render.yaml`.
-3. In the Supabase project Connect dialog, copy the session pooler URL for `DIRECT_URL` (port 5432) and transaction pooler URL for `DATABASE_URL` (port 6543). Keep the project password encoded in the URL, include `sslmode=require`, and include `pgbouncer=true&connection_limit=1` on the transaction URL.
-4. Set both URLs, `ADMIN_SEED_EMAIL`, and a unique `ADMIN_SEED_PASSWORD` in the Render service environment. Each build applies Prisma migrations; the first build seeds the initial shop/admin account only when the shop is absent.
+1. The public GitHub repository and Render service are already created.
+2. Add `DATABASE_URL` and `DIRECT_URL` to the Render service environment. The linked Supabase project reports pooler host `aws-1-eu-west-1.pooler.supabase.com` and username `postgres.himlzgngxdexksnjycno`; use port 6543 for `DATABASE_URL` and port 5432 for `DIRECT_URL`. Keep the database password URL-encoded, add `sslmode=require`, and include `pgbouncer=true&connection_limit=1` on the transaction URL.
+3. Add `ADMIN_SEED_EMAIL` and a unique `ADMIN_SEED_PASSWORD` in Render. Each build applies Prisma migrations; the first build seeds the initial shop/admin account only when the shop is absent. The linked Supabase database currently has no application tables.
 
 The service binds to Render's `PORT`, serves static assets and SPA routes, and checks health at `/health`. Production API requests use same-origin relative URLs.
 

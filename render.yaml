@@ -8,12 +8,12 @@ services:
     buildCommand: corepack pnpm install --frozen-lockfile --prod=false && corepack pnpm --dir apps/api exec prisma generate --schema prisma/schema.prisma && corepack pnpm --dir apps/api db:migrate && corepack pnpm --dir apps/api db:seed:if-empty && corepack pnpm build
     startCommand: corepack pnpm --dir apps/api start
     healthCheckPath: /health
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     envVars:
       - key: NODE_ENV
         value: production
       - key: WEB_ORIGIN
-        value: https://jaypos.onrender.com
+        value: https://jaypos-oqmo.onrender.com
       - key: PUBLIC_SHOP_SLUG
         value: main
       - key: ADMIN_SEED_EMAIL
@@ -27,6 +27,6 @@ services:
       - key: PAYMENT_PROVIDER
         value: lipwa
       - key: LIPWA_CALLBACK_URL
-        value: https://jaypos.onrender.com/api/payments/lipwa/callback
+        value: https://jaypos-oqmo.onrender.com/api/payments/lipwa/callback
       - key: UPLOADS_DIR
         value: ./uploads
