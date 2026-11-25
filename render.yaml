@@ -8,7 +8,7 @@ services:
     buildCommand: corepack pnpm install --frozen-lockfile --prod=false && corepack pnpm --dir apps/api exec prisma generate --schema prisma/schema.prisma && corepack pnpm --dir apps/api db:migrate && corepack pnpm --dir apps/api db:seed:if-empty && corepack pnpm build
     startCommand: corepack pnpm --dir apps/api start
     healthCheckPath: /health
-    autoDeployTrigger: off
+    autoDeployTrigger: commit
     envVars:
       - key: NODE_ENV
         value: production

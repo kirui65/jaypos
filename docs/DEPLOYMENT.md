@@ -5,7 +5,7 @@ The Render web service serves both the Vite app and Express API from the same HT
 ## Initial setup
 
 1. The public GitHub repository and Render service are already created.
-2. Add `DATABASE_URL` and `DIRECT_URL` to the Render service environment. The linked Supabase project reports pooler host `aws-1-eu-west-1.pooler.supabase.com` and username `postgres.himlzgngxdexksnjycno`; use port 6543 for `DATABASE_URL` and port 5432 for `DIRECT_URL`. Keep the database password URL-encoded, add `sslmode=require`, and include `pgbouncer=true&connection_limit=1` on the transaction URL.
+2. Add `DATABASE_URL` and `DIRECT_URL` to the Render service environment. The linked Supabase project reports pooler host `aws-1-eu-west-1.pooler.supabase.com` and username `postgres.himlzgngxdexksnjycno`; use port 6543 for `DATABASE_URL` and port 5432 for `DIRECT_URL`. Keep the database password URL-encoded, add `sslmode=require`, and include `pgbouncer=true&connection_limit=5` on the transaction URL.
 3. Add `ADMIN_SEED_EMAIL` and a unique `ADMIN_SEED_PASSWORD` in Render. Each build applies Prisma migrations; the first build seeds the initial shop/admin account only when the shop is absent. The linked Supabase database currently has no application tables.
 
 The service binds to Render's `PORT`, serves static assets and SPA routes, and checks health at `/health`. Production API requests use same-origin relative URLs.
