@@ -5,24 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#14243A" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <style>
-      #boot-splash{position:fixed;inset:0;z-index:9999;display:grid;place-content:center;justify-items:center;gap:20px;background:var(--ej-black,#14243a);opacity:1;transition:opacity 180ms ease;pointer-events:auto}
-      #boot-splash img{width:112px;height:112px;object-fit:contain;border-radius:50%}
-      #boot-splash .boot-line{width:48px;height:1px;overflow:hidden;background:var(--ej-graphite,#2b4a6d)}
-      #boot-splash .boot-line:after{display:block;width:100%;height:100%;content:"";background:var(--ej-blue,#2864c5);transform:translateX(-100%);animation:boot-progress 1.1s ease-in-out infinite}
-      #boot-splash.boot-splash-hidden{opacity:0;pointer-events:none}
-      @keyframes boot-progress{to{transform:translateX(100%)}}
-      @media(prefers-reduced-motion:reduce){#boot-splash .boot-line:after{animation:none;transform:none}#boot-splash{transition:none}}
-    </style>
     <title>Retail point of sale</title>
   </head>
   <body class="public-login">
-    <div id="boot-splash" aria-hidden="true"><img src="/logo.webp" alt="" width="112" height="112" fetchpriority="high" /><span class="boot-line"></span></div>
     <div id="root">
       <main class="login-page">
         <div class="login-backdrop" aria-hidden="true"></div>
         <section class="login-card" aria-labelledby="login-title">
-          <img id="login-logo" class="login-logo" src="/logo.webp" alt="Eminent Jay logo" width="220" height="220" fetchpriority="high" />
+          <img id="login-logo" class="login-logo" alt="Shop logo" width="220" height="220" fetchpriority="high" hidden />
           <div class="gold-rule"></div>
           <p class="login-brand-name" data-brand-name>Shop</p>
           <p class="login-kicker">RETAIL POINT OF SALE</p>
@@ -31,7 +21,7 @@
           <form id="login-form" class="stack-form">
             <label class="field">
               <span>Username or email</span>
-              <input name="identifier" autocomplete="username" autofocus required />
+              <input name="identifier" autocomplete="username" required />
             </label>
             <label class="field">
               <span>Password</span>

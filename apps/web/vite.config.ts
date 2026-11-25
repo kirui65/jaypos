@@ -22,9 +22,9 @@ export default defineConfig({
     injectRegister: null,
     registerType: "autoUpdate",
     manifest: {
-      name: "Eminent Jay Retail POS",
-      short_name: "Eminent Jay",
-      description: "Sales and stock for the Eminent Jay retail shop.",
+      name: "Retail POS",
+      short_name: "Retail POS",
+      description: "Sales and stock management for a retail shop.",
       theme_color: "#14243A",
       background_color: "#F5F8FC",
       display: "standalone",

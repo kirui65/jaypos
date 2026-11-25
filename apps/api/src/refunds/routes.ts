@@ -5,6 +5,7 @@ import { z } from "zod";
 import { canAccess } from "../auth/permissions.js";
 import { requirePermission, type AuthenticatedRequest } from "../auth/middleware.js";
 import { prisma } from "../db.js";
+import { businessData, businessWhere, shopData, shopWhere } from "../tenant-scope.js";
 
 async function restockReturnedItem(
   tx: Prisma.TransactionClient,
@@ -14,8 +15,8 @@ async function restockReturnedItem(
   saleItemId: string,
   quantity: number,
 ) {
-  const item = await tx.saleItem.findUniqueOrThrow({
-    where: { id: saleItemId },
+  const item = await tx.saleItem.findFirstOrThrow({
+    where: businessWhere(shopId, { id: saleItemId }),
     include: {
       variant: {
         include: { parentBulkVariant: true, bundleComponents: { include: { component: true } } },
@@ -45,21 +46,19 @@ async function restockReturnedItem(
         ];
   for (const demand of demands) {
     await tx.stockLevel.upsert({
-      where: { shopId_variantId: { shopId, variantId: demand.variantId } },
-      create: {
-        shopId,
+      where: businessWhere(shopId, { shopId_variantId: { shopId, variantId: demand.variantId } }),
+      create: businessData(shopId, {
         variantId: demand.variantId,
         quantity: demand.quantity,
         mlRemaining: demand.ml || null,
-      },
+      }),
       update: {
         ...(demand.quantity ? { quantity: { increment: demand.quantity } } : {}),
         ...(demand.ml ? { mlRemaining: { increment: demand.ml } } : {}),
       },
     });
     await tx.stockMovement.create({
-      data: {
-        shopId,
+      data: businessData(shopId, {
         variantId: demand.variantId,
         quantityDelta: demand.quantity,
         mlDelta: demand.ml || null,
@@ -68,7 +67,7 @@ async function restockReturnedItem(
         referenceId: refundId,
         reason: "Approved refund restock",
         userId,
-      },
+      }),
     });
   }
 }
@@ -114,7 +113,7 @@ refundsRouter.get(
     const user = req.authUser!;
     const all = canAccess(user, "refunds.approve") || canAccess(user, "sales.read.all");
     const refunds = await prisma.refund.findMany({
-      where: { shopId: user.shopId, ...(all ? {} : { requestedBy: user.id }) },
+      where: shopWhere(req, all ? {} : { requestedBy: user.id }),
       include: {
         items: { include: { saleItem: { include: { variant: { include: { product: true } } } } } },
         sale: { select: { receiptNo: true, sellerId: true } },
@@ -141,7 +140,7 @@ refundsRouter.post(
       const refund = await prisma.$transaction(
         async (tx) => {
           const sale = await tx.sale.findFirst({
-            where: { id: parsed.data.saleId, shopId: user.shopId },
+            where: shopWhere(req, { id: parsed.data.saleId }),
             include: {
               items: true,
               refunds: {
@@ -154,11 +153,10 @@ refundsRouter.post(
             throw new Error("Completed sale not found");
           if (parsed.data.exchangeSaleId) {
             const exchangeSale = await tx.sale.findFirst({
-              where: {
+              where: shopWhere(req, {
                 id: parsed.data.exchangeSaleId,
-                shopId: user.shopId,
                 status: SaleStatus.completed,
-              },
+              }),
             });
             if (!exchangeSale)
               throw new Error("Linked exchange sale must be a completed sale in this shop");
@@ -198,33 +196,30 @@ refundsRouter.post(
           if (amountCents < 1 || priorAmount + amountCents > sale.paidCents)
             throw new Error("Refund amount exceeds the amount paid");
           const created = await tx.refund.create({
-            data: {
-              shopId: user.shopId,
+            data: businessData(user.shopId, {
               saleId: sale.id,
               exchangeSaleId: parsed.data.exchangeSaleId ?? null,
               requestedBy: user.id,
               reason: parsed.data.reason,
               amountCents,
               items: {
-                create: parsed.data.items.map((item) => ({
-                  shopId: user.shopId,
+                create: parsed.data.items.map((item) => businessData(user.shopId, {
                   saleItemId: item.saleItemId,
                   quantity: item.quantity,
                   disposition: RefundDisposition.damaged,
                 })),
               },
-            },
+            }),
             include: { items: true },
           });
           await tx.auditLog.create({
-            data: {
-              shopId: user.shopId,
+            data: businessData(user.shopId, {
               userId: user.id,
               action: "refund.requested",
               entity: "refund",
               entityId: created.id,
               afterJson: { saleId: sale.id, amountCents, reason: parsed.data.reason },
-            },
+            }),
           });
           return created;
         },
@@ -257,7 +252,7 @@ refundsRouter.patch(
       const refund = await prisma.$transaction(
         async (tx) => {
           const current = await tx.refund.findFirst({
-            where: { id: req.params.id!, shopId: user.shopId },
+            where: shopWhere(req, { id: req.params.id! }),
             include: {
               items: true,
               sale: { include: { refunds: { where: { status: RefundStatus.approved } } } },
@@ -281,7 +276,10 @@ refundsRouter.patch(
                 (row) => row.saleItemId === item.saleItemId,
               )?.disposition;
               if (!disposition) throw new Error("Missing item disposition");
-              await tx.refundItem.update({ where: { id: item.id }, data: { disposition } });
+              await tx.refundItem.update({
+                where: shopWhere(req, { id: item.id }),
+                data: { disposition },
+              });
               if (disposition === RefundDisposition.restock) {
                 await restockReturnedItem(
                   tx,
@@ -292,23 +290,21 @@ refundsRouter.patch(
                   item.quantity,
                 );
               } else {
-                const saleItem = await tx.saleItem.findUniqueOrThrow({
-                  where: { id: item.saleItemId },
+                const saleItem = await tx.saleItem.findFirstOrThrow({
+                  where: shopWhere(req, { id: item.saleItemId }),
                 });
                 await tx.damagedStockLevel.upsert({
-                  where: {
+                  where: shopWhere(req, {
                     shopId_variantId: { shopId: user.shopId, variantId: saleItem.variantId },
-                  },
-                  create: {
-                    shopId: user.shopId,
+                  }),
+                  create: shopData(req, {
                     variantId: saleItem.variantId,
                     quantity: item.quantity,
-                  },
+                  }),
                   update: { quantity: { increment: item.quantity } },
                 });
                 await tx.stockMovement.create({
-                  data: {
-                    shopId: user.shopId,
+                  data: shopData(req, {
                     variantId: saleItem.variantId,
                     quantityDelta: 0,
                     type: "damage",
@@ -316,13 +312,13 @@ refundsRouter.patch(
                     referenceId: current.id,
                     reason: `Refund return placed in damaged stock (${item.quantity} units)`,
                     userId: user.id,
-                  },
+                  }),
                 });
               }
             }
           }
           const updated = await tx.refund.update({
-            where: { id: current.id },
+            where: shopWhere(req, { id: current.id }),
             data: {
               status,
               approvedBy: user.id,
@@ -334,12 +330,12 @@ refundsRouter.patch(
             include: { items: true, sale: true },
           });
           const allRefunds = await tx.refund.findMany({
-            where: { saleId: current.saleId, status: RefundStatus.approved },
+            where: shopWhere(req, { saleId: current.saleId, status: RefundStatus.approved }),
           });
           const refunded = allRefunds.reduce((sum, row) => sum + row.amountCents, 0);
           if (status === RefundStatus.approved)
             await tx.sale.update({
-              where: { id: current.saleId },
+              where: shopWhere(req, { id: current.saleId }),
               data: {
                 status:
                   refunded >= current.sale.paidCents
@@ -348,8 +344,7 @@ refundsRouter.patch(
               },
             });
           await tx.auditLog.create({
-            data: {
-              shopId: user.shopId,
+            data: shopData(req, {
               userId: user.id,
               action: status === RefundStatus.approved ? "refund.approved" : "refund.rejected",
               entity: "refund",
@@ -360,7 +355,7 @@ refundsRouter.patch(
                 amountCents: current.amountCents,
                 method: parsed.data.refundMethod ?? null,
               },
-            },
+            }),
           });
           return updated;
         },

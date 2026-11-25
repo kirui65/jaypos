@@ -7,5 +7,5 @@ const app = createApp();
 createPaymentPoller();
 
 app.listen(port, () => {
-  process.stdout.write(`Eminent Jay API listening on port ${port}\n`);
+  process.stdout.write(`Retail POS API listening on port ${port}\n`);
 });

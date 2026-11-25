@@ -165,7 +165,7 @@ if [ -d "$DIST" ]; then
   idx="$DIST/index.html"
   grep -q 'name="viewport"'    "$idx" && ok "viewport meta present"          || bad "viewport meta missing"
   grep -q 'name="theme-color"' "$idx" && ok "theme-color meta present"       || warn "theme-color meta missing"
-  grep -qi '<title>[^<]*Eminent Jay' "$idx" && ok "page title uses the product name" || warn "page title does not say Eminent Jay"
+  grep -qi '<title>[^<][^<]*</title>' "$idx" && ok "page title present; shop branding loads from settings" || warn "page title is missing or empty"
   grep -q '<html[^>]*lang=' "$idx" && ok "html lang attribute present"       || warn "html lang attribute missing"
 else
   bad "$DIST not found: the build did not complete"

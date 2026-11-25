@@ -25,13 +25,26 @@ const permissionDescriptions: Record<string, string> = {
 
 async function main() {
   const shop = await prisma.shop.upsert({
-    where: { id: "00000000-0000-4000-8000-000000000001" },
-    update: { name: "Eminent Jay" },
+    where: { slug: "main" },
+    update: {},
     create: {
-      id: "00000000-0000-4000-8000-000000000001",
-      name: "Eminent Jay",
-      logoUrl: "/logo.webp",
-      settingsJson: { currency: "KES", timeZone: "Africa/Nairobi" },
+      slug: "main",
+      name: "Shop",
+      settingsJson: {
+        brand_name: "Shop",
+        logo_url: "",
+        address: "",
+        phone: "",
+        kra_pin: "",
+        receipt_prefix: "EJ",
+        receipt_footer: "Thank you for shopping with us",
+        invoice_terms: "Please contact the shop with any questions about this invoice.",
+        tax_enabled: false,
+        tax_rate_bps: 0,
+        tax_inclusive: false,
+        currency: "KES",
+        timeZone: "Africa/Nairobi",
+      },
     },
   });
 
@@ -78,18 +91,18 @@ async function main() {
     }
   }
 
-  const adminEmail = process.env.ADMIN_SEED_EMAIL ?? "owner@eminentjay.local";
+  const adminEmail = (process.env.ADMIN_SEED_EMAIL ?? "owner@retail.local").trim().toLowerCase();
   const adminPassword = process.env.ADMIN_SEED_PASSWORD || randomBytes(18).toString("base64url");
-  const existingAdmin = await prisma.user.findFirst({
-    where: { shopId: shop.id, username: adminEmail },
-  });
+  const existingAdmin = await prisma.user.findUnique({ where: { username: adminEmail } });
+  if (existingAdmin && existingAdmin.shopId !== shop.id)
+    throw new Error("The configured seed login is already assigned to another shop");
   const admin =
     existingAdmin ??
     (await prisma.user.create({
       data: {
         shopId: shop.id,
         roleId: roleByName.get("admin")!.id,
-        name: "Eminent Jay Owner",
+        name: "Shop Owner",
         username: adminEmail,
         email: adminEmail,
         passwordHash: await bcrypt.hash(adminPassword, 12),
@@ -138,9 +151,9 @@ async function main() {
   }
 
   const brand = await prisma.brand.upsert({
-    where: { shopId_name: { shopId: shop.id, name: "Eminent Jay Select" } },
+    where: { shopId_name: { shopId: shop.id, name: "Sample Brand" } },
     update: {},
-    create: { shopId: shop.id, name: "Eminent Jay Select" },
+    create: { shopId: shop.id, name: "Sample Brand" },
   });
   const samples = [
     {
@@ -221,7 +234,7 @@ async function main() {
           },
         });
     const variant = await prisma.productVariant.upsert({
-      where: { sku: sample.sku },
+      where: { shopId_sku: { shopId: shop.id, sku: sample.sku } },
       update: {
         shopId: shop.id,
         productId: product.id,

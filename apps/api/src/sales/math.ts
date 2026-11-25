@@ -21,6 +21,17 @@ export function calculateSaleTotals(lines: PricedLine[], cartDiscountCents: numb
   };
 }
 
+export function calculateTaxCents(
+  taxableCents: number,
+  enabled: boolean,
+  rateBps: number,
+  inclusive: boolean,
+): number {
+  if (!enabled || taxableCents <= 0 || !Number.isInteger(rateBps) || rateBps <= 0) return 0;
+  const safeRateBps = Math.min(10000, rateBps);
+  return Math.round((taxableCents * safeRateBps) / (inclusive ? 10000 + safeRateBps : 10000));
+}
+
 export function allocateSalePayments(payments: SalePayment[], totalCents: number) {
   const cashPayments = payments.filter((payment) => payment.method === "cash");
   if (cashPayments.length > 1) throw new Error("Use one cash payment per sale");

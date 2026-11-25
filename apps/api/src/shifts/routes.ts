@@ -1,8 +1,9 @@
-import { CashMovementType, PaymentMethod, PaymentStatus, Prisma } from "@prisma/client";
+import { CashMovementType, PaymentMethod, PaymentStatus, Prisma, SaleStatus } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { requirePermission, type AuthenticatedRequest } from "../auth/middleware.js";
+import { sessionShopId, shopData, shopWhere } from "../tenant-scope.js";
 
 const openInput = z
   .object({
@@ -39,7 +40,7 @@ shiftsRouter.get(
   requirePermission("sales.create"),
   async (request: AuthenticatedRequest, response) => {
     const shift = await prisma.shift.findFirst({
-      where: { shopId: request.authUser!.shopId, sellerId: request.authUser!.id, closedAt: null },
+      where: shopWhere(request, { sellerId: request.authUser!.id, closedAt: null }),
       include: { cashMovements: { orderBy: { createdAt: "asc" } } },
     });
     return response.json({ shift });
@@ -55,10 +56,9 @@ shiftsRouter.post(
       return response
         .status(400)
         .json({ error: "Invalid shift opening", details: parsed.error.flatten() });
-    const shopId = request.authUser!.shopId;
     const sellerId = request.authUser!.id;
     const alreadyOpen = await prisma.shift.findFirst({
-      where: { shopId, sellerId, closedAt: null },
+      where: shopWhere(request, { sellerId, closedAt: null }),
     });
     if (alreadyOpen)
       return response
@@ -68,23 +68,21 @@ shiftsRouter.post(
       const shift = await prisma.$transaction(
         async (tx) => {
           const created = await tx.shift.create({
-            data: {
-              shopId,
+            data: shopData(request, {
               sellerId,
               openingCashCents: parsed.data.openingCashCents,
               deviceId: parsed.data.deviceId ?? null,
-            },
+            }),
           });
           await tx.auditLog.create({
-            data: {
-              shopId,
+            data: shopData(request, {
               userId: sellerId,
               action: "shift.opened",
               entity: "shift",
               entityId: created.id,
               afterJson: { openingCashCents: created.openingCashCents, deviceId: created.deviceId },
               ip: request.ip ?? null,
-            },
+            }),
           });
           return created;
         },
@@ -106,18 +104,18 @@ shiftsRouter.post(
       return response
         .status(400)
         .json({ error: "Invalid cash movement", details: parsed.error.flatten() });
-    const shopId = request.authUser!.shopId;
     const sellerId = request.authUser!.id;
     const movement = await prisma.$transaction(
       async (tx) => {
-        const shift = await tx.shift.findFirst({ where: { shopId, sellerId, closedAt: null } });
+        const shift = await tx.shift.findFirst({
+          where: shopWhere(request, { sellerId, closedAt: null }),
+        });
         if (!shift) return null;
         const created = await tx.cashMovement.create({
-          data: { ...parsed.data, shopId, shiftId: shift.id },
+          data: shopData(request, { ...parsed.data, shiftId: shift.id }),
         });
         await tx.auditLog.create({
-          data: {
-            shopId,
+          data: shopData(request, {
             userId: sellerId,
             action: "shift.cash_movement_recorded",
             entity: "cash_movement",
@@ -128,7 +126,7 @@ shiftsRouter.post(
               reason: created.reason,
             },
             ip: request.ip ?? null,
-          },
+          }),
         });
         return created;
       },
@@ -149,41 +147,43 @@ shiftsRouter.post(
       return response
         .status(400)
         .json({ error: "Invalid shift close", details: parsed.error.flatten() });
-    const shopId = request.authUser!.shopId;
+    const shopId = sessionShopId(request);
     const sellerId = request.authUser!.id;
     const result = await prisma.$transaction(
       async (tx) => {
-        const shift = await tx.shift.findFirst({ where: { shopId, sellerId, closedAt: null } });
+        const shift = await tx.shift.findFirst({
+          where: shopWhere(request, { sellerId, closedAt: null }),
+        });
         if (!shift) return null;
         const [cashPayments, manualMpesaPayments, cardPayments, cashMovements] = await Promise.all([
           tx.payment.aggregate({
-            where: {
+            where: shopWhere(request, {
               shopId,
               method: PaymentMethod.cash,
               status: PaymentStatus.paid,
-              sale: { shiftId: shift.id, status: "completed" },
-            },
+              sale: { shiftId: shift.id, status: SaleStatus.completed },
+            }),
             _sum: { amountCents: true },
           }),
           tx.payment.aggregate({
-            where: {
+            where: shopWhere(request, {
               shopId,
               method: PaymentMethod.mpesa_manual,
-              sale: { shiftId: shift.id, status: "completed" },
-            },
+              sale: { shiftId: shift.id, status: SaleStatus.completed },
+            }),
             _sum: { amountCents: true },
           }),
           tx.payment.aggregate({
-            where: {
+            where: shopWhere(request, {
               shopId,
               method: PaymentMethod.card,
-              sale: { shiftId: shift.id, status: "completed" },
-            },
+              sale: { shiftId: shift.id, status: SaleStatus.completed },
+            }),
             _sum: { amountCents: true },
           }),
           tx.cashMovement.groupBy({
             by: ["type"],
-            where: { shopId, shiftId: shift.id },
+            where: shopWhere(request, { shiftId: shift.id }),
             _sum: { amountCents: true },
           }),
         ]);
@@ -193,13 +193,13 @@ shiftsRouter.post(
           cashMovements.find(({ type }) => type === CashMovementType.out)?._sum.amountCents ?? 0;
         const expectedCashCents = calculateExpectedCash(
           shift.openingCashCents,
-          cashPayments._sum.amountCents ?? 0,
+          cashPayments._sum?.amountCents ?? 0,
           inCents,
           outCents,
         );
         const varianceCents = parsed.data.countedCashCents - expectedCashCents;
         const updatedCount = await tx.shift.updateMany({
-          where: { id: shift.id, closedAt: null },
+          where: shopWhere(request, { id: shift.id, closedAt: null }),
           data: {
             closedAt: new Date(),
             expectedCashCents,
@@ -209,10 +209,11 @@ shiftsRouter.post(
           },
         });
         if (!updatedCount.count) return null;
-        const closed = await tx.shift.findUniqueOrThrow({ where: { id: shift.id } });
+        const closed = await tx.shift.findFirstOrThrow({
+          where: shopWhere(request, { id: shift.id }),
+        });
         await tx.auditLog.create({
-          data: {
-            shopId,
+          data: shopData(request, {
             userId: sellerId,
             action: "shift.closed",
             entity: "shift",
@@ -225,7 +226,7 @@ shiftsRouter.post(
               notes: parsed.data.notes ?? null,
             },
             ip: request.ip ?? null,
-          },
+          }),
         });
         return {
           shift: closed,
@@ -233,8 +234,8 @@ shiftsRouter.post(
             expectedCashCents,
             countedCashCents: parsed.data.countedCashCents,
             varianceCents,
-            mpesaManualCents: manualMpesaPayments._sum.amountCents ?? 0,
-            cardCents: cardPayments._sum.amountCents ?? 0,
+            mpesaManualCents: manualMpesaPayments._sum?.amountCents ?? 0,
+            cardCents: cardPayments._sum?.amountCents ?? 0,
           },
         };
       },

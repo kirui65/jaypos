@@ -3,6 +3,7 @@ import { publicProduct } from "../src/catalog/routes.js";
 
 const sample = {
   id: "product-1",
+  shopId: "shop-a",
   name: "Perfume",
   description: null,
   attributesJson: {},

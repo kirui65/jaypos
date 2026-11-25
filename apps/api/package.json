@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "db:generate": "DOTENV_CONFIG_PATH=../../.env NODE_OPTIONS=--require=dotenv/config prisma generate",
     "db:migrate": "DOTENV_CONFIG_PATH=../../.env NODE_OPTIONS=--require=dotenv/config prisma migrate deploy",
-    "db:seed": "DOTENV_CONFIG_PATH=../../.env NODE_OPTIONS=--require=dotenv/config tsx prisma/seed.ts"
+    "db:seed": "DOTENV_CONFIG_PATH=../../.env NODE_OPTIONS=--require=dotenv/config tsx prisma/seed.ts",
+    "db:images:migrate": "DOTENV_CONFIG_PATH=../../.env NODE_OPTIONS=--require=dotenv/config tsx prisma/migrate-product-images.ts"
   },
   "dependencies": {
     "@eminent/shared": "workspace:*",

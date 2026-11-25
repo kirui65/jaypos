@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { PaymentMethod, PaymentStatus, Prisma, SaleStatus } from "@prisma/client";
+import { PaymentMethod, PaymentStatus, Prisma, RefundStatus, SaleStatus } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
 import { canAccess } from "../auth/permissions.js";
 import { normalizeKenyanPhone } from "@eminent/shared";
 import { requirePermission, type AuthenticatedRequest } from "../auth/middleware.js";
 import { prisma } from "../db.js";
-import { allocateSalePayments, calculateSaleTotals, type SalePayment } from "./math.js";
+import { businessWhere, sessionShopId, shopData, shopRowWhere, shopWhere } from "../tenant-scope.js";
+import { readShopSettings, shopSettingText } from "../shop-settings.js";
+import {
+  allocateSalePayments,
+  calculateSaleTotals,
+  calculateTaxCents,
+  type SalePayment,
+} from "./math.js";
 import { renderInvoiceHtml } from "./invoice-html.js";
 import { calculateProfitability } from "./profitability.js";
 import { planStockDemands } from "./inventory.js";
@@ -80,11 +87,16 @@ const saleInput = z
 const documentSettingsInput = z
   .object({
     name: z.string().trim().min(1).max(120),
+    logoUrl: z.union([z.string().trim().url().max(2048), z.literal("")]),
     address: z.string().trim().max(300),
     phone: z.string().trim().max(32),
     kraPin: z.string().trim().max(32),
+    receiptPrefix: z.string().trim().max(12).regex(/^[A-Za-z0-9_-]*$/),
     receiptFooter: z.string().trim().max(300),
     invoiceTerms: z.string().trim().max(800),
+    taxEnabled: z.boolean(),
+    taxRateBps: z.number().int().min(0).max(10000),
+    taxInclusive: z.boolean(),
   })
   .strict();
 
@@ -175,12 +187,6 @@ function nairobiDayStart(day: string) {
   return new Date(`${day}T00:00:00+03:00`);
 }
 
-function documentSetting(value: unknown, key: string, fallback: string) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return fallback;
-  const setting = (value as Record<string, unknown>)[key];
-  return typeof setting === "string" ? setting : fallback;
-}
-
 function paymentPlan(payments: z.infer<typeof saleInput>["payments"], totalCents: number) {
   const normalized: SalePayment[] = payments.map((payment) => payment);
   const allocated = allocateSalePayments(normalized, totalCents);
@@ -201,7 +207,7 @@ function paymentPlan(payments: z.infer<typeof saleInput>["payments"], totalCents
 }
 
 async function findSale(shopId: string, clientUuid: string) {
-  return prisma.sale.findFirst({ where: { shopId, clientUuid }, include: saleInclude });
+  return prisma.sale.findFirst({ where: businessWhere(shopId, { clientUuid }), include: saleInclude });
 }
 
 async function getOwnerSummary(shopId: string) {
@@ -225,13 +231,12 @@ async function getOwnerSummary(shopId: string) {
   const rangeEnd = days[6]!.end;
   const [sales, refunds] = await Promise.all([
     prisma.sale.findMany({
-      where: {
-        shopId,
+      where: businessWhere(shopId, {
         status: {
           in: [SaleStatus.completed, SaleStatus.partially_refunded, SaleStatus.refunded],
         },
         createdAt: { gte: rangeStart, lt: rangeEnd },
-      },
+      }),
       select: {
         createdAt: true,
         totalCents: true,
@@ -240,11 +245,10 @@ async function getOwnerSummary(shopId: string) {
       },
     }),
     prisma.refund.findMany({
-      where: {
-        shopId,
-        status: "approved",
+      where: businessWhere(shopId, {
+        status: RefundStatus.approved,
         updatedAt: { gte: rangeStart, lt: rangeEnd },
-      },
+      }),
       select: {
         updatedAt: true,
         amountCents: true,
@@ -320,23 +324,21 @@ salesRouter.get(
   async (request: AuthenticatedRequest, response) => {
     const user = request.authUser!;
     if (user.role.name !== "admin") return response.status(403).json({ error: "Forbidden" });
-    const shop = await prisma.shop.findUniqueOrThrow({ where: { id: user.shopId } });
+    const shop = await prisma.shop.findUniqueOrThrow({ where: shopRowWhere(request, {}) });
+    const settings = readShopSettings(shop.settingsJson);
     return response.json({
       settings: {
-        name: shop.name,
-        address: shop.address ?? "",
-        phone: shop.phone ?? "",
-        kraPin: shop.kraPin ?? "",
-        receiptFooter: documentSetting(
-          shop.settingsJson,
-          "receipt_footer",
-          "Thank you for shopping with us",
-        ),
-        invoiceTerms: documentSetting(
-          shop.settingsJson,
-          "invoice_terms",
-          "Please contact the shop with any questions about this invoice.",
-        ),
+        name: shopSettingText(settings, "brand_name"),
+        logoUrl: shopSettingText(settings, "logo_url"),
+        address: shopSettingText(settings, "address"),
+        phone: shopSettingText(settings, "phone"),
+        kraPin: shopSettingText(settings, "kra_pin"),
+        receiptPrefix: shopSettingText(settings, "receipt_prefix") || "EJ",
+        receiptFooter: shopSettingText(settings, "receipt_footer"),
+        invoiceTerms: shopSettingText(settings, "invoice_terms"),
+        taxEnabled: settings.tax_enabled === true,
+        taxRateBps: typeof settings.tax_rate_bps === "number" ? settings.tax_rate_bps : 0,
+        taxInclusive: settings.tax_inclusive === true,
       },
     });
   },
@@ -354,42 +356,40 @@ salesRouter.patch(
         .status(400)
         .json({ error: "Invalid document settings", details: parsed.error.flatten() });
     const updated = await prisma.$transaction(async (tx) => {
-      const current = await tx.shop.findUniqueOrThrow({ where: { id: user.shopId } });
-      const settings =
-        current.settingsJson &&
-        typeof current.settingsJson === "object" &&
-        !Array.isArray(current.settingsJson)
-          ? { ...(current.settingsJson as Record<string, unknown>) }
-          : {};
+      const current = await tx.shop.findUniqueOrThrow({ where: shopRowWhere(request, {}) });
+      const settings = { ...readShopSettings(current.settingsJson) };
       settings.brand_name = parsed.data.name;
+      settings.address = parsed.data.address || "";
+      settings.phone = parsed.data.phone || "";
+      settings.kra_pin = parsed.data.kraPin || "";
+      settings.logo_url = parsed.data.logoUrl || "";
+      settings.receipt_prefix = parsed.data.receiptPrefix || "EJ";
       settings.receipt_footer = parsed.data.receiptFooter;
       settings.invoice_terms = parsed.data.invoiceTerms;
+      settings.tax_enabled = parsed.data.taxEnabled;
+      settings.tax_rate_bps = parsed.data.taxRateBps;
+      settings.tax_inclusive = parsed.data.taxInclusive;
       const shop = await tx.shop.update({
-        where: { id: user.shopId },
+        where: shopRowWhere(request, {}),
         data: {
-          name: parsed.data.name,
-          address: parsed.data.address || null,
-          phone: parsed.data.phone || null,
-          kraPin: parsed.data.kraPin || null,
           settingsJson: settings as Prisma.InputJsonValue,
         },
       });
       await tx.auditLog.create({
-        data: {
-          shopId: user.shopId,
+        data: shopData(request, {
           userId: user.id,
           action: "shop.document_settings_updated",
           entity: "shop",
           entityId: shop.id,
           afterJson: {
-            fields: ["name", "address", "phone", "kraPin", "receipt_footer", "invoice_terms"],
+          fields: ["brand_name", "logo_url", "address", "phone", "kra_pin", "receipt_prefix", "receipt_footer", "invoice_terms", "tax_enabled", "tax_rate_bps", "tax_inclusive"],
           },
           ip: request.ip ?? null,
-        },
+        }),
       });
       return shop;
     });
-    return response.json({ settings: { name: updated.name } });
+    return response.json({ settings: { name: shopSettingText(updated.settingsJson, "brand_name") } });
   },
 );
 
@@ -412,7 +412,10 @@ salesRouter.get(
     if (user.role.name !== "admin") return response.status(403).json({ error: "Forbidden" });
     const [summary, shop] = await Promise.all([
       getOwnerSummary(user.shopId),
-      prisma.shop.findUniqueOrThrow({ where: { id: user.shopId }, select: { name: true } }),
+      prisma.shop.findUniqueOrThrow({
+        where: shopRowWhere(request, {}),
+        select: { settingsJson: true },
+      }),
     ]);
     const netRevenueCents = summary.days.reduce((sum, day) => sum + day.netRevenueCents, 0);
     const profitCents = summary.days.reduce((sum, day) => sum + day.profitCents, 0);
@@ -428,15 +431,14 @@ salesRouter.get(
       }).format(nairobiDayStart(date));
 
     await prisma.auditLog.create({
-      data: {
-        shopId: user.shopId,
+      data: shopData(request, {
         userId: user.id,
         action: "report.owner_pdf_generated",
         entity: "report",
         entityId: user.shopId,
         afterJson: { from: summary.days[0]!.date, to: summary.today.date },
         ip: request.ip ?? null,
-      },
+      }),
     });
 
     const doc = new PDFDocument({ size: "A4", margin: 48 });
@@ -457,7 +459,11 @@ salesRouter.get(
       dateStyle: "medium",
       timeStyle: "short",
     }).format(new Date());
-    doc.font("Helvetica-Bold").fontSize(20).fillColor(navy).text(shop.name);
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(20)
+      .fillColor(navy)
+      .text(shopSettingText(shop.settingsJson, "brand_name"));
     doc.moveDown(1);
     doc.font("Helvetica-Bold").fontSize(24).fillColor(blue).text("PROFITABILITY REPORT");
     doc
@@ -544,7 +550,7 @@ salesRouter.get(
     const canReadAll = canAccess(user, "sales.read.all");
     const all = canReadAll && parsedPage.data.scope === "all";
     const sales = await prisma.sale.findMany({
-      where: { shopId: user.shopId, ...(all ? {} : { sellerId: user.id }) },
+      where: shopWhere(request, all ? {} : { sellerId: user.id }),
       include: saleInclude,
       orderBy: { createdAt: "desc" },
       skip: (parsedPage.data.page - 1) * parsedPage.data.pageSize,
@@ -595,7 +601,7 @@ salesRouter.post(
         .status(400)
         .json({ error: "Lipwa STK payments must be whole KES amounts of at least KES 10" });
     const user = request.authUser!;
-    const shopId = user.shopId;
+    const shopId = sessionShopId(request);
     const prior = await findSale(shopId, parsed.data.clientUuid);
     if (prior)
       return response.json({
@@ -606,17 +612,18 @@ salesRouter.post(
       const created = await prisma.$transaction(
         async (tx) => {
           const shift = await tx.shift.findFirst({
-            where: { shopId, sellerId: user.id, closedAt: null },
+            where: shopWhere(request, { sellerId: user.id, closedAt: null }),
           });
           if (!shift) throw new Error("Open a shift before completing a sale");
           const shop = await tx.shop.findUniqueOrThrow({
-            where: { id: shopId },
+            where: shopRowWhere(request, {}),
             select: { settingsJson: true },
           });
-          const settings = (shop.settingsJson ?? {}) as Record<string, unknown>;
+          const settings = readShopSettings(shop.settingsJson);
           const allowNegativeStock = settings.allow_negative_stock === true;
+          const receiptPrefix = shopSettingText(settings, "receipt_prefix") || "EJ";
           const variants = await tx.productVariant.findMany({
-            where: { shopId, id: { in: parsed.data.items.map(({ variantId }) => variantId) } },
+            where: shopWhere(request, { id: { in: parsed.data.items.map(({ variantId }) => variantId) } }),
             include: {
               product: { include: { productType: true } },
               parentBulkVariant: { include: { product: { include: { productType: true } } } },
@@ -686,6 +693,30 @@ salesRouter.post(
             })),
             parsed.data.cartDiscountCents,
           );
+          const taxEnabled = settings.tax_enabled === true;
+          const taxRateBps =
+            typeof settings.tax_rate_bps === "number" && Number.isInteger(settings.tax_rate_bps)
+              ? Math.max(0, Math.min(10000, settings.tax_rate_bps))
+              : 0;
+          const taxInclusive = settings.tax_inclusive === true;
+          const netTotalCents = total.subtotalCents - total.discountCents;
+          const lineNetBeforeCart = lines.map(
+            ({ input, unitPriceCents }) => unitPriceCents * input.quantity - input.discountCents,
+          );
+          const lineNetBeforeCartTotal = lineNetBeforeCart.reduce((sum, amount) => sum + amount, 0);
+          let allocatedNetCents = 0;
+          const lineTaxCents = lineNetBeforeCart.map((lineNet, index) => {
+            const lineNetAfterDiscount =
+              index === lineNetBeforeCart.length - 1
+                ? netTotalCents - allocatedNetCents
+                : lineNetBeforeCartTotal > 0
+                  ? Math.floor((netTotalCents * lineNet) / lineNetBeforeCartTotal)
+                  : 0;
+            allocatedNetCents += lineNetAfterDiscount;
+            return calculateTaxCents(lineNetAfterDiscount, taxEnabled, taxRateBps, taxInclusive);
+          });
+          const taxCents = lineTaxCents.reduce((sum, amount) => sum + amount, 0);
+          const saleTotalCents = netTotalCents + (taxInclusive ? 0 : taxCents);
           const userDiscountLimit = user.role.name === "admin" ? 100 : user.discountLimitPct;
           if (
             total.subtotalCents > 0 &&
@@ -704,20 +735,19 @@ salesRouter.post(
             throw new Error("A discount reason is required");
           if (
             parsed.data.customerId &&
-            !(await tx.customer.findFirst({ where: { id: parsed.data.customerId, shopId } }))
+            !(await tx.customer.findFirst({ where: shopWhere(request, { id: parsed.data.customerId }) }))
           )
             throw new Error("Customer not found in this shop");
           const customer = customerDetails
             ? await tx.customer.upsert({
                 where: {
-                  shopId_phone: { shopId, phone: customerDetails.phone },
+                  shopId_phone: shopWhere(request, { phone: customerDetails.phone }),
                 },
-                create: {
-                  shopId,
+              create: shopData(request, {
                   name: customerDetails.name,
                   phone: customerDetails.phone,
                   email: customerDetails.email ?? null,
-                },
+              }),
                 update: {
                   name: customerDetails.name,
                   ...(customerDetails.email ? { email: customerDetails.email } : {}),
@@ -725,7 +755,7 @@ salesRouter.post(
               })
             : null;
           const saleCustomerId = customer?.id ?? parsed.data.customerId ?? null;
-          const paymentRows = paymentPlan(paymentsInput, total.totalCents);
+          const paymentRows = paymentPlan(paymentsInput, saleTotalCents);
           const hasPendingStk = paymentRows.some(
             ({ method }) => method === PaymentMethod.mpesa_stk,
           );
@@ -760,19 +790,18 @@ salesRouter.post(
           const saleId = randomUUID();
           for (const demand of hasPendingStk ? [] : demands) {
             const variant = await tx.productVariant.findFirst({
-              where: { id: demand.variantId, shopId },
+              where: shopWhere(request, { id: demand.variantId }),
             });
             if (!variant) throw new Error("Bundle component not found in this shop");
             const stockLevel = await tx.stockLevel.findUnique({
-              where: { shopId_variantId: { shopId, variantId: demand.variantId } },
+              where: shopWhere(request, { shopId_variantId: { shopId, variantId: demand.variantId } }),
             });
             if (!allowNegativeStock) {
-              const where: Prisma.StockLevelWhereInput = {
-                shopId,
+              const where: Prisma.StockLevelWhereInput = shopWhere(request, {
                 variantId: demand.variantId,
                 ...(demand.quantity ? { quantity: { gte: demand.quantity } } : {}),
                 ...(demand.ml ? { mlRemaining: { gte: demand.ml } } : {}),
-              };
+              });
               const changed = await tx.stockLevel.updateMany({
                 where,
                 data: {
@@ -783,13 +812,12 @@ salesRouter.post(
               if (!changed.count) throw new Error("Insufficient stock for " + variant.sku);
             } else {
               await tx.stockLevel.upsert({
-                where: { shopId_variantId: { shopId, variantId: demand.variantId } },
-                create: {
-                  shopId,
+                where: shopWhere(request, { shopId_variantId: { shopId, variantId: demand.variantId } }),
+                create: shopData(request, {
                   variantId: demand.variantId,
                   quantity: -demand.quantity,
                   mlRemaining: demand.ml ? -demand.ml : null,
-                },
+                }),
                 update: {
                   ...(demand.quantity ? { quantity: { decrement: demand.quantity } } : {}),
                   ...(demand.ml
@@ -802,8 +830,7 @@ salesRouter.post(
               });
             }
             await tx.stockMovement.create({
-              data: {
-                shopId,
+              data: shopData(request, {
                 variantId: demand.variantId,
                 quantityDelta: -demand.quantity,
                 mlDelta: demand.ml ? -demand.ml : null,
@@ -812,19 +839,18 @@ salesRouter.post(
                 referenceId: saleId,
                 reason: "Completed sale",
                 userId: user.id,
-              },
+              }),
             });
           }
           const counter = await tx.receiptCounter.upsert({
-            where: { shopId },
-            create: { shopId, lastValue: 1 },
+            where: shopWhere(request, {}),
+            create: shopData(request, { lastValue: 1 }),
             update: { lastValue: { increment: 1 } },
           });
-          const receiptNo = "EJ-" + String(counter.lastValue).padStart(6, "0");
+          const receiptNo = receiptPrefix + "-" + String(counter.lastValue).padStart(6, "0");
           const sale = await tx.sale.create({
-            data: {
+            data: shopData(request, {
               id: saleId,
-              shopId,
               clientUuid: parsed.data.clientUuid,
               receiptNo,
               deviceId: parsed.data.deviceId ?? null,
@@ -834,44 +860,41 @@ salesRouter.post(
               status: hasPendingStk ? SaleStatus.draft : SaleStatus.completed,
               subtotalCents: total.subtotalCents,
               discountCents: total.discountCents,
-              taxCents: 0,
-              totalCents: total.totalCents,
+              taxCents,
+              totalCents: saleTotalCents,
               paidCents: hasPendingStk
                 ? paymentRows
                     .filter(({ method }) => method !== PaymentMethod.mpesa_stk)
                     .reduce((sum, { amountCents }) => sum + amountCents, 0)
-                : total.totalCents,
-              changeCents: allocateSalePayments(paymentsInput as SalePayment[], total.totalCents)
+                : saleTotalCents,
+              changeCents: allocateSalePayments(paymentsInput as SalePayment[], saleTotalCents)
                 .changeCents,
               notes: parsed.data.notes ?? null,
               items: {
-                create: lines.map(({ input, variant, unitPriceCents, unitCostCents }) => ({
-                  shopId,
+                create: lines.map(({ input, variant, unitPriceCents, unitCostCents }, index) => shopData(request, {
                   variantId: variant.id,
                   qty: input.quantity,
                   mlQty: variant.parentBulkVariantId ? input.quantity * variant.mlPerUnit! : null,
                   unitPriceCents,
                   unitCostCents,
                   discountCents: input.discountCents,
-                  taxCents: 0,
+                  taxCents: lineTaxCents[index] ?? 0,
                   lineTotalCents: unitPriceCents * input.quantity - input.discountCents,
                 })),
               },
               payments: {
-                create: paymentRows.map(({ method, status, amountCents, ...extra }) => ({
-                  shopId,
+                create: paymentRows.map(({ method, status, amountCents, ...extra }) => shopData(request, {
                   method,
                   status,
                   amountCents,
                   ...extra,
                 })),
               },
-            },
+            }),
             include: saleInclude,
           });
           await tx.auditLog.create({
-            data: {
-              shopId,
+            data: shopData(request, {
               userId: user.id,
               action: hasPendingStk ? "sale.payment_pending" : "sale.completed",
               entity: "sale",
@@ -886,7 +909,7 @@ salesRouter.post(
                 awaitingStk: hasPendingStk,
               },
               ip: request.ip ?? null,
-            },
+            }),
           });
           return sale;
         },
@@ -915,7 +938,7 @@ salesRouter.get(
   requirePermission("sales.create"),
   async (request: AuthenticatedRequest, response) => {
     const carts = await prisma.heldCart.findMany({
-      where: { shopId: request.authUser!.shopId, sellerId: request.authUser!.id },
+      where: shopWhere(request, { sellerId: request.authUser!.id }),
       orderBy: { createdAt: "asc" },
     });
     return response.json({ carts });
@@ -933,28 +956,26 @@ salesRouter.post(
         .json({ error: "Invalid held cart", details: parsed.error.flatten() });
     const user = request.authUser!;
     const shift = await prisma.shift.findFirst({
-      where: { shopId: user.shopId, sellerId: user.id, closedAt: null },
+      where: shopWhere(request, { sellerId: user.id, closedAt: null }),
     });
     if (!shift) return response.status(409).json({ error: "Open a shift before holding a cart" });
     const cart = await prisma.$transaction(async (tx) => {
       const created = await tx.heldCart.create({
-        data: {
-          shopId: user.shopId,
+        data: shopData(request, {
           sellerId: user.id,
           shiftId: shift.id,
           label: parsed.data.label ?? null,
           cartJson: parsed.data as Prisma.InputJsonValue,
-        },
+        }),
       });
       await tx.auditLog.create({
-        data: {
-          shopId: user.shopId,
+        data: shopData(request, {
           userId: user.id,
           action: "sale.cart_held",
           entity: "held_cart",
           entityId: created.id,
           ip: request.ip ?? null,
-        },
+        }),
       });
       return created;
     });
@@ -970,24 +991,23 @@ salesRouter.post(
       return response.status(400).json({ error: "Invalid held cart id" });
     const user = request.authUser!;
     const shift = await prisma.shift.findFirst({
-      where: { shopId: user.shopId, sellerId: user.id, closedAt: null },
+      where: shopWhere(request, { sellerId: user.id, closedAt: null }),
     });
     if (!shift) return response.status(409).json({ error: "Open a shift before resuming a cart" });
     const cart = await prisma.$transaction(async (tx) => {
       const held = await tx.heldCart.findFirst({
-        where: { id: request.params.id!, shopId: user.shopId, sellerId: user.id },
+        where: shopWhere(request, { id: request.params.id!, sellerId: user.id }),
       });
       if (!held) return null;
-      await tx.heldCart.delete({ where: { id: held.id } });
+      await tx.heldCart.delete({ where: shopWhere(request, { id: held.id }) });
       await tx.auditLog.create({
-        data: {
-          shopId: user.shopId,
+        data: shopData(request, {
           userId: user.id,
           action: "sale.cart_resumed",
           entity: "held_cart",
           entityId: held.id,
           ip: request.ip ?? null,
-        },
+        }),
       });
       return held;
     });
@@ -1004,7 +1024,7 @@ salesRouter.get(
       return response.status(400).json({ error: "Invalid sale id" });
     const user = request.authUser!;
     const sale = await prisma.sale.findFirst({
-      where: { id: request.params.id!, shopId: user.shopId },
+      where: shopWhere(request, { id: request.params.id! }),
       include: {
         shop: true,
         customer: { select: { name: true, phone: true, email: true } },
@@ -1026,15 +1046,14 @@ salesRouter.get(
     const filename = invoiceNo.replace(/[^a-zA-Z0-9_-]/g, "-");
     const isPdf = request.query.format === "pdf";
     await prisma.auditLog.create({
-      data: {
-        shopId: user.shopId,
+      data: shopData(request, {
         userId: user.id,
         action: isPdf ? "invoice.generated" : "invoice.previewed",
         entity: "sale",
         entityId: sale.id,
         afterJson: { invoiceNo, format: isPdf ? "pdf" : "html" },
         ip: request.ip ?? null,
-      },
+      }),
     });
 
     const money = (cents: number) =>
@@ -1044,16 +1063,13 @@ salesRouter.get(
       dateStyle: "medium",
       timeStyle: "short",
     }).format(sale.createdAt);
-    const invoiceTerms = documentSetting(
-      sale.shop.settingsJson,
-      "invoice_terms",
-      "Please contact the shop with any questions about this invoice.",
-    );
-    const receiptFooter = documentSetting(
-      sale.shop.settingsJson,
-      "receipt_footer",
-      "Thank you for shopping with us",
-    );
+    const documentSettings = readShopSettings(sale.shop.settingsJson);
+    const brandName = shopSettingText(documentSettings, "brand_name") || "Shop";
+    const address = shopSettingText(documentSettings, "address");
+    const phone = shopSettingText(documentSettings, "phone");
+    const kraPin = shopSettingText(documentSettings, "kra_pin");
+    const invoiceTerms = shopSettingText(documentSettings, "invoice_terms");
+    const receiptFooter = shopSettingText(documentSettings, "receipt_footer");
     if (!isPdf) {
       response.setHeader(
         "Content-Security-Policy",
@@ -1076,16 +1092,16 @@ salesRouter.get(
     const navy = "#162A45";
     const blue = "#245AB8";
     const muted = "#65758B";
-    doc.font("Helvetica-Bold").fontSize(20).fillColor(navy).text(sale.shop.name);
+    doc.font("Helvetica-Bold").fontSize(20).fillColor(navy).text(brandName);
     doc
       .font("Helvetica")
       .fontSize(9)
       .fillColor(muted)
       .text(
         [
-          sale.shop.address,
-          sale.shop.phone,
-          sale.shop.kraPin ? `Business PIN: ${sale.shop.kraPin}` : null,
+          address,
+          phone,
+          kraPin ? `Business PIN: ${kraPin}` : null,
         ]
           .filter(Boolean)
           .join("  •  "),
@@ -1207,7 +1223,7 @@ salesRouter.get(
       return response.status(400).json({ error: "Invalid sale id" });
     const user = request.authUser!;
     const sale = await prisma.sale.findFirst({
-      where: { id: request.params.id!, shopId: user.shopId },
+      where: shopWhere(request, { id: request.params.id! }),
       include: {
         shop: true,
         customer: { select: { name: true, phone: true } },
@@ -1219,8 +1235,7 @@ salesRouter.get(
     if (!sale || (sale.sellerId !== user.id && !canAccess(user, "sales.read.all")))
       return response.status(404).json({ error: "Sale not found" });
     await prisma.auditLog.create({
-      data: {
-        shopId: user.shopId,
+      data: shopData(request, {
         userId: user.id,
         action: "receipt.reprinted",
         entity: "sale",
@@ -1229,7 +1244,7 @@ salesRouter.get(
           receiptNo: sale.receiptNo,
           format: request.query.format === "pdf" ? "pdf" : "html",
         },
-      },
+      }),
     });
     const money = (cents: number) => `KES ${(cents / 100).toFixed(2)}`;
     const esc = (value: string) =>
@@ -1246,11 +1261,12 @@ salesRouter.get(
       dateStyle: "medium",
       timeStyle: "short",
     }).format(sale.createdAt);
-    const receiptFooter = documentSetting(
-      sale.shop.settingsJson,
-      "receipt_footer",
-      "Thank you for shopping with us",
-    );
+    const documentSettings = readShopSettings(sale.shop.settingsJson);
+    const brandName = shopSettingText(documentSettings, "brand_name") || "Shop";
+    const address = shopSettingText(documentSettings, "address");
+    const phone = shopSettingText(documentSettings, "phone");
+    const kraPin = shopSettingText(documentSettings, "kra_pin");
+    const receiptFooter = shopSettingText(documentSettings, "receipt_footer");
     const thermalWidth = request.query.width === "58" ? 58 : 80;
     if (request.query.format === "pdf") {
       const doc = new PDFDocument({ size: "A4", margin: 48 });
@@ -1260,13 +1276,13 @@ salesRouter.get(
         `inline; filename="${sale.receiptNo ?? "receipt"}.pdf"`,
       );
       doc.pipe(response);
-      doc.fontSize(18).text(sale.shop.name, { align: "center" });
+      doc.fontSize(18).text(brandName, { align: "center" });
       doc.moveDown(0.3).fontSize(9).text("COPY", { align: "center" });
       doc
         .moveDown()
         .fontSize(10)
         .text(
-          `${sale.shop.address ?? ""}\n${sale.shop.phone ?? ""}\n${sale.shop.kraPin ? `KRA PIN: ${sale.shop.kraPin}` : ""}`,
+          `${address}\n${phone}\n${kraPin ? `KRA PIN: ${kraPin}` : ""}`,
         );
       doc
         .moveDown()
@@ -1279,7 +1295,7 @@ salesRouter.get(
       for (const line of lines) doc.text(line);
       doc.moveDown().text("----------------------------------------------");
       doc.text(
-        `Subtotal: ${money(sale.subtotalCents)}\nDiscount: ${money(sale.discountCents)}\nTotal: ${money(sale.totalCents)}\nPaid: ${money(sale.paidCents)}`,
+        `Subtotal: ${money(sale.subtotalCents)}\nDiscount: ${money(sale.discountCents)}\nTax: ${money(sale.taxCents)}\nTotal: ${money(sale.totalCents)}\nPaid: ${money(sale.paidCents)}`,
       );
       doc.moveDown().text("Payments");
       for (const payment of sale.payments)
@@ -1297,7 +1313,7 @@ salesRouter.get(
     response
       .type("html")
       .send(
-        `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Receipt ${esc(sale.receiptNo ?? "")}</title><style>@page{size:${thermalWidth}mm auto;margin:3mm}body{font:12px monospace;color:#000;width:calc(${thermalWidth}mm - 6mm);margin:auto}header{text-align:center;font-weight:bold;font-size:16px}hr{border:0;border-top:1px dashed #000}.row{display:flex;justify-content:space-between;gap:8px}.copy{text-align:center;font-weight:bold}.total{font-weight:bold;font-size:14px}@media print{button{display:none}}</style></head><body><header>${esc(sale.shop.name)}</header><p class="copy">COPY</p><center>${esc(sale.shop.address ?? "")}<br>${esc(sale.shop.phone ?? "")}<br>${sale.shop.kraPin ? `KRA PIN: ${esc(sale.shop.kraPin)}` : ""}</center><hr>Receipt: ${esc(sale.receiptNo ?? "—")}<br>${esc(time)}<br>Served by: ${esc(sale.seller.name)}${sale.customer ? `<br>Customer: ${esc(sale.customer.name ?? "Customer")}${sale.customer.phone ? ` · ${esc(sale.customer.phone)}` : ""}` : ""}<hr>${lines.map((line) => `<div>${esc(line)}</div>`).join("")}<hr><div class="row"><span>Subtotal</span><span>${money(sale.subtotalCents)}</span></div><div class="row"><span>Discount</span><span>${money(sale.discountCents)}</span></div><div class="row total"><span>Total</span><span>${money(sale.totalCents)}</span></div><div class="row"><span>Paid</span><span>${money(sale.paidCents)}</span></div><hr>${sale.payments.map((payment) => `<div>${esc(payment.method)} ${esc(payment.status)} ${money(payment.amountCents)} ${payment.mpesaReceipt ? esc(payment.mpesaReceipt) : ""}</div>`).join("")}<p style="text-align:center">${esc(receiptFooter)}</p><button onclick="print()">Print</button></body></html>`,
+        `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Receipt ${esc(sale.receiptNo ?? "")}</title><style>@page{size:${thermalWidth}mm auto;margin:3mm}body{font:12px monospace;color:#000;width:calc(${thermalWidth}mm - 6mm);margin:auto}header{text-align:center;font-weight:bold;font-size:16px}hr{border:0;border-top:1px dashed #000}.row{display:flex;justify-content:space-between;gap:8px}.copy{text-align:center;font-weight:bold}.total{font-weight:bold;font-size:14px}@media print{button{display:none}}</style></head><body><header>${esc(brandName)}</header><p class="copy">COPY</p><center>${esc(address)}<br>${esc(phone)}<br>${kraPin ? `KRA PIN: ${esc(kraPin)}` : ""}</center><hr>Receipt: ${esc(sale.receiptNo ?? "—")}<br>${esc(time)}<br>Served by: ${esc(sale.seller.name)}${sale.customer ? `<br>Customer: ${esc(sale.customer.name ?? "Customer")}${sale.customer.phone ? ` · ${esc(sale.customer.phone)}` : ""}` : ""}<hr>${lines.map((line) => `<div>${esc(line)}</div>`).join("")}<hr><div class="row"><span>Subtotal</span><span>${money(sale.subtotalCents)}</span></div><div class="row"><span>Discount</span><span>${money(sale.discountCents)}</span></div><div class="row"><span>Tax</span><span>${money(sale.taxCents)}</span></div><div class="row total"><span>Total</span><span>${money(sale.totalCents)}</span></div><div class="row"><span>Paid</span><span>${money(sale.paidCents)}</span></div><hr>${sale.payments.map((payment) => `<div>${esc(payment.method)} ${esc(payment.status)} ${money(payment.amountCents)} ${payment.mpesaReceipt ? esc(payment.mpesaReceipt) : ""}</div>`).join("")}<p style="text-align:center">${esc(receiptFooter)}</p><button onclick="print()">Print</button></body></html>`,
       );
   },
 );

@@ -49,6 +49,7 @@ type Catalog = {
   brands: { id: string; name: string }[];
   products: Product[];
   bundles?: { bundleVariantId: string; componentVariantId: string; quantity: number }[];
+  taxSettings?: { enabled: boolean; rateBps: number; inclusive: boolean };
 };
 type HeldCart = { id: string; label: string | null; createdAt: string; cartJson: { items: { variantId: string; quantity: number }[] } };
 type CartLine = { product: Product; variant: Variant; quantity: number };
@@ -125,11 +126,16 @@ type OwnerSummary = {
 };
 type DocumentSettings = {
   name: string;
+  logoUrl: string;
   address: string;
   phone: string;
   kraPin: string;
+  receiptPrefix: string;
   receiptFooter: string;
   invoiceTerms: string;
+  taxEnabled: boolean;
+  taxRateBps: number;
+  taxInclusive: boolean;
 };
 const UserContext = createContext<AppUser | null>(null);
 const useUser = () => useContext(UserContext)!;
@@ -627,7 +633,13 @@ function POSPage() {
     [products, department, type, debouncedSearch],
   );
   const showTillSkeleton = useDelayedLoading(isPending || shiftPending);
-  const total = cart.reduce((sum, line) => sum + line.variant.priceCents * line.quantity, 0);
+  const subtotal = cart.reduce((sum, line) => sum + line.variant.priceCents * line.quantity, 0);
+  const taxSettings = catalog?.taxSettings;
+  const taxRateBps = taxSettings?.enabled ? Math.max(0, Math.min(10000, taxSettings.rateBps)) : 0;
+  const taxCents = taxRateBps
+    ? Math.round((subtotal * taxRateBps) / (taxSettings?.inclusive ? 10000 + taxRateBps : 10000))
+    : 0;
+  const total = subtotal + (taxSettings?.inclusive ? 0 : taxCents);
   const invoiceDetailsStarted = Boolean(
     invoiceBuyerName.trim() || invoiceBuyerPhone.trim() || invoiceBuyerEmail.trim(),
   );
@@ -2611,6 +2623,7 @@ function DocumentSettingsPage() {
       setMessage("Receipt and invoice settings saved.");
       void client.invalidateQueries({ queryKey: ["document-settings"] });
       void client.invalidateQueries({ queryKey: ["brand"] });
+      void client.invalidateQueries({ queryKey: ["catalog"] });
     },
   });
   const update = <K extends keyof DocumentSettings>(key: K, value: DocumentSettings[K]) => {
@@ -2639,6 +2652,9 @@ function DocumentSettingsPage() {
           <Field label="Business name">
             <input value={form?.name ?? ""} onChange={(event) => update("name", event.target.value)} required />
           </Field>
+          <Field label="Logo URL" hint="Use a logo URL saved in this shop's settings.">
+            <input type="url" value={form?.logoUrl ?? ""} onChange={(event) => update("logoUrl", event.target.value)} />
+          </Field>
           <Field label="Business phone">
             <input value={form?.phone ?? ""} onChange={(event) => update("phone", event.target.value)} />
           </Field>
@@ -2648,11 +2664,29 @@ function DocumentSettingsPage() {
           <Field label="Business PIN">
             <input value={form?.kraPin ?? ""} onChange={(event) => update("kraPin", event.target.value)} />
           </Field>
+          <Field label="Receipt number prefix">
+            <input value={form?.receiptPrefix ?? ""} maxLength={12} onChange={(event) => update("receiptPrefix", event.target.value)} required />
+          </Field>
           <Field label="Receipt footer" hint="Short message printed at the bottom of receipts.">
             <textarea rows={3} maxLength={300} value={form?.receiptFooter ?? ""} onChange={(event) => update("receiptFooter", event.target.value)} />
           </Field>
           <Field label="Invoice terms or notes" hint="This text appears on sales invoice PDFs.">
             <textarea rows={3} maxLength={800} value={form?.invoiceTerms ?? ""} onChange={(event) => update("invoiceTerms", event.target.value)} />
+          </Field>
+          <Field label="Tax enabled">
+            <select value={String(form?.taxEnabled ?? false)} onChange={(event) => update("taxEnabled", event.target.value === "true")}>
+              <option value="false">Off</option>
+              <option value="true">On</option>
+            </select>
+          </Field>
+          <Field label="Tax rate (%)">
+            <input type="number" min="0" max="100" step="0.01" value={((form?.taxRateBps ?? 0) / 100).toString()} onChange={(event) => update("taxRateBps", Math.round(Number(event.target.value) * 100))} />
+          </Field>
+          <Field label="Tax price mode">
+            <select value={String(form?.taxInclusive ?? false)} onChange={(event) => update("taxInclusive", event.target.value === "true")}>
+              <option value="false">Add tax to prices</option>
+              <option value="true">Prices include tax</option>
+            </select>
           </Field>
           <p className="document-settings-note">
             Printed totals, products, and quantities always come from the saved sale. Updating these settings changes the document header and reusable text.

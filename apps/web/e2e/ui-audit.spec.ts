@@ -3,7 +3,7 @@ import AxeBuilder from '@axe-core/playwright';
 import fs from 'node:fs';
 
 /**
- * Eminent Jay browser UI audit.
+ * Retail POS browser UI audit.
  *
  * Run through scripts/audit.sh, or directly from the repo root:
  *   E2E_BASE_URL=http://localhost:4173 E2E_ADMIN_USER=admin E2E_ADMIN_PASS=... \
@@ -79,7 +79,7 @@ test('login shader respects device support and reduced motion', async ({ browser
   await standardPage.route('**/api/brand', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ brandName: 'Eminent Jay', logoUrl: '/logo.webp' }),
+    body: JSON.stringify({ brandName: 'Test Shop', logoUrl: '/logo.webp' }),
   }));
   await standardPage.route('**/api/auth/me', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await standardPage.goto(`${BASE}/`, { waitUntil: 'networkidle' });
@@ -108,7 +108,7 @@ test('login shader respects device support and reduced motion', async ({ browser
   await reducedPage.route('**/api/brand', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ brandName: 'Eminent Jay', logoUrl: '/logo.webp' }),
+    body: JSON.stringify({ brandName: 'Test Shop', logoUrl: '/logo.webp' }),
   }));
   await reducedPage.route('**/api/auth/me', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await reducedPage.goto(`${BASE}/`, { waitUntil: 'networkidle' });
@@ -152,7 +152,7 @@ for (const role of ['public', 'admin', 'staff'] as const) {
               route.fulfill({
                 status: 200,
                 contentType: 'application/json',
-                body: JSON.stringify({ brandName: 'Eminent Jay', logoUrl: '/logo.webp' }),
+                body: JSON.stringify({ brandName: 'Test Shop', logoUrl: '/logo.webp' }),
               }),
             );
             await page.route('**/api/auth/me', (route) =>
@@ -234,7 +234,7 @@ for (const role of ['public', 'admin', 'staff'] as const) {
           expect.soft(fonts.body, 'body font-family').toMatch(vp.width <= 640 ? /system-ui|ej sans/i : /ej sans/i);
           if (vp.width > 640) expect.soft(fonts.loaded.length, 'web fonts loaded').toBeGreaterThan(0);
 
-          // 6. Colours: only the Eminent Jay palette (catches default browser grey and stray colors)
+          // 6. Colours: only the configured palette (catches default browser grey and stray colors)
           const offPalette = await page.evaluate((allowed: string[]) => {
             const seen = new Map<string, string>();
             for (const el of Array.from(document.querySelectorAll<HTMLElement>('body *'))) {
@@ -252,7 +252,7 @@ for (const role of ['public', 'admin', 'staff'] as const) {
             }
             return Array.from(seen.entries()).map(([k, v]) => `rgb(${k}) on ${v}`).slice(0, 10);
           }, PALETTE);
-          expect.soft(offPalette, 'colours outside the Eminent Jay palette').toEqual([]);
+          expect.soft(offPalette, 'colours outside the configured palette').toEqual([]);
 
           // 7. Typography: sizes stay on the type scale, only approved font families
           const type = await page.evaluate((sizes: number[]) => {

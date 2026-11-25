@@ -1,4 +1,5 @@
 import type { Prisma, StockMovementType } from "@prisma/client";
+import { businessData, businessShopRowWhere, businessWhere } from "../tenant-scope.js";
 
 type StockDemand = {
   variantId: string;
@@ -74,7 +75,7 @@ export async function deductSaleStock(
   allowNegativeOverride = false,
 ): Promise<{ needsReview: boolean }> {
   const saleItems = await tx.saleItem.findMany({
-    where: { saleId, shopId },
+    where: businessWhere(shopId, { saleId }),
     include: {
       variant: {
         include: {
@@ -111,7 +112,7 @@ export async function deductSaleStock(
     bundleComponents,
   );
   const shop = await tx.shop.findUniqueOrThrow({
-    where: { id: shopId },
+    where: businessShopRowWhere(shopId, {}),
     select: { settingsJson: true },
   });
   const settings = (shop.settingsJson ?? {}) as Record<string, unknown>;
@@ -119,19 +120,18 @@ export async function deductSaleStock(
   let needsReview = false;
   for (const demand of demands) {
     const variant = await tx.productVariant.findFirst({
-      where: { id: demand.variantId, shopId },
+      where: businessWhere(shopId, { id: demand.variantId }),
     });
     if (!variant) throw new Error("Stock component not found in this shop");
     const stockLevel = await tx.stockLevel.findUnique({
-      where: { shopId_variantId: { shopId, variantId: demand.variantId } },
+      where: businessWhere(shopId, { shopId_variantId: { shopId, variantId: demand.variantId } }),
     });
     if (!allowNegativeStock) {
-      const where: Prisma.StockLevelWhereInput = {
-        shopId,
+      const where: Prisma.StockLevelWhereInput = businessWhere(shopId, {
         variantId: demand.variantId,
         ...(demand.quantity ? { quantity: { gte: demand.quantity } } : {}),
         ...(demand.ml ? { mlRemaining: { gte: demand.ml } } : {}),
-      };
+      });
       const changed = await tx.stockLevel.updateMany({
         where,
         data: {
@@ -148,13 +148,12 @@ export async function deductSaleStock(
       )
         needsReview = true;
       await tx.stockLevel.upsert({
-        where: { shopId_variantId: { shopId, variantId: demand.variantId } },
-        create: {
-          shopId,
+        where: businessWhere(shopId, { shopId_variantId: { shopId, variantId: demand.variantId } }),
+        create: businessData(shopId, {
           variantId: demand.variantId,
           quantity: -demand.quantity,
           mlRemaining: demand.ml ? -demand.ml : null,
-        },
+        }),
         update: {
           ...(demand.quantity ? { quantity: { decrement: demand.quantity } } : {}),
           ...(demand.ml
@@ -167,8 +166,7 @@ export async function deductSaleStock(
       });
     }
     await tx.stockMovement.create({
-      data: {
-        shopId,
+      data: businessData(shopId, {
         variantId: demand.variantId,
         quantityDelta: -demand.quantity,
         mlDelta: demand.ml ? -demand.ml : null,
@@ -177,7 +175,7 @@ export async function deductSaleStock(
         referenceId: saleId,
         reason: "Completed sale",
         userId: sellerId,
-      },
+      }),
     });
   }
   return { needsReview };

@@ -1,6 +1,15 @@
 # Project Progress
 
-Last updated: 2026-11-24
+Last updated: 2026-11-26
+
+## Single-shop tenant-ready foundation handoff (2026-11-26)
+
+- Kept the product scoped to one shop. N16 multi-tenancy, signup, billing, and the platform console are deferred until a second shop is signed; N15 quotations remain a single-shop feature. The active order is restyle and tablet pass, N10 offline, N15 quotations, then the remaining backlog.
+- Added a Prisma migration that preserves the current shop and its records as shop #1, gives it the `main` slug, and enforces per-shop SKU/barcode uniqueness alongside the existing per-shop receipt-number and customer-phone rules. Username and email remain globally unique.
+- Added a shared query/data helper that takes the shop from the authenticated session, persisted shop identity on auth sessions, and two-shop endpoint tests for sales, products, customers, staff, and stock.
+- Shop branding, logo, receipt text, and tax now read from shop settings. Uploaded product images use a `shops/{shopId}/product-images/` path. Legacy embedded images have a migration script; it has not been run against the hosted database.
+- Checks: typecheck, lint, tests, and build passed. `bash scripts/audit.sh` finished with 50 PASS, 8 WARN, and 0 FAIL; mobile Lighthouse TBT was 188 ms and desktop TBT was 0 ms. The logged-in page sweep was skipped because E2E credentials were not configured. The migration was applied only to the isolated local `tenant_test` database.
+- **Next:** finish the restyle and tablet pass before beginning N10 offline work.
 
 ## N1 UI foundation handoff (2026-11-24)
 

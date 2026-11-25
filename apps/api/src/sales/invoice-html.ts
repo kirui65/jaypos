@@ -1,9 +1,6 @@
 type InvoiceSale = {
   shop: {
-    name: string;
-    address: string | null;
-    phone: string | null;
-    kraPin: string | null;
+    settingsJson: unknown;
   };
   receiptNo: string | null;
   createdAt: Date;
@@ -42,21 +39,30 @@ const money = (cents: number) =>
     maximumFractionDigits: 2,
   })}`;
 
+function shopText(settingsValue: unknown, key: string): string {
+  if (!settingsValue || typeof settingsValue !== "object" || Array.isArray(settingsValue)) return "";
+  const value = (settingsValue as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : "";
+}
+
 export function renderInvoiceHtml({
   sale,
   invoiceNo,
   invoiceTerms,
   receiptFooter,
 }: InvoiceHtmlInput) {
+  const brandName = shopText(sale.shop.settingsJson, "brand_name") || "Shop";
   const time = new Intl.DateTimeFormat("en-KE", {
     timeZone: "Africa/Nairobi",
     dateStyle: "medium",
     timeStyle: "short",
   }).format(sale.createdAt);
   const address = [
-    sale.shop.address,
-    sale.shop.phone,
-    sale.shop.kraPin ? `Business PIN: ${sale.shop.kraPin}` : null,
+    shopText(sale.shop.settingsJson, "address"),
+    shopText(sale.shop.settingsJson, "phone"),
+    shopText(sale.shop.settingsJson, "kra_pin")
+      ? `Business PIN: ${shopText(sale.shop.settingsJson, "kra_pin")}`
+      : null,
   ]
     .filter((value): value is string => Boolean(value))
     .map(escapeHtml)
@@ -91,7 +97,7 @@ export function renderInvoiceHtml({
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>${escapeHtml(invoiceNo)} · ${escapeHtml(sale.shop.name)}</title>
+    <title>${escapeHtml(invoiceNo)} · ${escapeHtml(brandName)}</title>
     <style>
       :root { font-family: Arial, Helvetica, sans-serif; color: #172b46; background: #edf2f8; font-synthesis: none; }
       * { box-sizing: border-box; }
@@ -150,7 +156,7 @@ export function renderInvoiceHtml({
     </nav>
     <main class="invoice">
       <header class="invoice-head">
-        <div class="business"><h1>${escapeHtml(sale.shop.name)}</h1><p>${address || "Retail sales"}</p></div>
+        <div class="business"><h1>${escapeHtml(brandName)}</h1><p>${address || "Retail sales"}</p></div>
         <div class="meta"><h2>INVOICE</h2><p><strong>${escapeHtml(invoiceNo)}</strong></p><p>Receipt: ${escapeHtml(sale.receiptNo ?? "—")}</p><p>${escapeHtml(time)} EAT</p></div>
       </header>
       <section class="bill-to">

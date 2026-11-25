@@ -4,6 +4,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { requirePermission, type AuthenticatedRequest } from "../auth/middleware.js";
+import { sessionShopId, shopData, shopWhere } from "../tenant-scope.js";
 
 const manualTypes = ["purchase", "adjustment", "damage", "tester"] as const;
 const movementLine = z
@@ -60,10 +61,10 @@ async function writeStockChange(
   line: MovementLine,
   countedQuantity?: number,
 ) {
-  const shopId = request.authUser!.shopId;
+  const shopId = sessionShopId(request);
   const variant = await tx.productVariant.findFirst({
-    where: { id: line.variantId, shopId },
-    include: { stockLevels: { where: { shopId } } },
+    where: shopWhere(request, { id: line.variantId }),
+    include: { stockLevels: { where: shopWhere(request, {}) } },
   });
   if (!variant) throw new Error("Variant not found in this shop");
   if (line.type === "tester" && !variant.isTester)
@@ -107,7 +108,7 @@ async function writeStockChange(
     throw new Error("Bulk stock must track remaining millilitres");
   const movementType: StockMovementType = countedQuantity === undefined ? line.type : "stock_take";
   await tx.stockLevel.upsert({
-    where: { shopId_variantId: { shopId, variantId: variant.id } },
+    where: shopWhere(request, { shopId_variantId: { shopId, variantId: variant.id } }),
     create: {
       shopId,
       variantId: variant.id,
@@ -118,23 +119,21 @@ async function writeStockChange(
   });
   if (next.costCents !== variant.costCents)
     await tx.productVariant.update({
-      where: { id: variant.id },
+    where: shopWhere(request, { id: variant.id }),
       data: { costCents: next.costCents },
     });
   const movement = await tx.stockMovement.create({
-    data: {
-      shopId,
+    data: shopData(request, {
       variantId: variant.id,
       quantityDelta: next.quantityDelta,
       mlDelta: line.mlDelta ?? null,
       type: movementType,
       reason: line.reason,
       userId: request.authUser!.id,
-    },
+    }),
   });
   await tx.auditLog.create({
-    data: {
-      shopId,
+    data: shopData(request, {
       userId: request.authUser!.id,
       action: "stock.movement_created",
       entity: "stock_movement",
@@ -152,7 +151,7 @@ async function writeStockChange(
         reason: line.reason,
       },
       ip: request.ip ?? null,
-    },
+    }),
   });
   return { movement, level: { quantity: next.quantity, mlRemaining: next.mlRemaining } };
 }
@@ -163,7 +162,7 @@ stockRouter.get(
   requirePermission("stock.write"),
   async (request: AuthenticatedRequest, response) => {
     const levels = await prisma.damagedStockLevel.findMany({
-      where: { shopId: request.authUser!.shopId, quantity: { gt: 0 } },
+      where: shopWhere(request, { quantity: { gt: 0 } }),
       include: {
         variant: { select: { id: true, sku: true, product: { select: { name: true } } } },
       },
@@ -177,7 +176,7 @@ stockRouter.get(
   requirePermission("stock.read"),
   async (request: AuthenticatedRequest, response) => {
     const levels = await prisma.stockLevel.findMany({
-      where: { shopId: request.authUser!.shopId },
+      where: shopWhere(request, {}),
       include: { variant: { include: { product: true } } },
       orderBy: { updatedAt: "desc" },
     });
@@ -204,7 +203,7 @@ stockRouter.get(
   requirePermission("stock.read"),
   async (request: AuthenticatedRequest, response) => {
     const movements = await prisma.stockMovement.findMany({
-      where: { shopId: request.authUser!.shopId },
+      where: shopWhere(request, {}),
       include: {
         variant: { include: { product: true } },
         user: { select: { id: true, name: true } },
@@ -323,24 +322,21 @@ stockRouter.post(
       return response
         .status(400)
         .json({ error: "Invalid stock report", details: parsed.error.flatten() });
-    const shopId = request.authUser!.shopId;
     const variant = await prisma.productVariant.findFirst({
-      where: { id: parsed.data.variantId, shopId },
+      where: shopWhere(request, { id: parsed.data.variantId }),
     });
     if (!variant) return response.status(404).json({ error: "Variant not found" });
     const report = await prisma.$transaction(async (tx) => {
       const created = await tx.stockReport.create({
-        data: {
+        data: shopData(request, {
           ...parsed.data,
           quantity: parsed.data.quantity ?? null,
           photoUrl: parsed.data.photoUrl ?? null,
-          shopId,
           reportedBy: request.authUser!.id,
-        },
+        }),
       });
       await tx.auditLog.create({
-        data: {
-          shopId,
+        data: shopData(request, {
           userId: request.authUser!.id,
           action: "stock.report_submitted",
           entity: "stock_report",
@@ -352,7 +348,7 @@ stockRouter.post(
             reason: created.reason,
           },
           ip: request.ip ?? null,
-        },
+        }),
       });
       return created;
     });
@@ -365,7 +361,7 @@ stockRouter.get(
   requirePermission("stock.write"),
   async (request: AuthenticatedRequest, response) => {
     const reports = await prisma.stockReport.findMany({
-      where: { shopId: request.authUser!.shopId },
+      where: shopWhere(request, {}),
       include: {
         variant: { include: { product: true } },
         reporter: { select: { id: true, name: true } },
@@ -385,16 +381,15 @@ stockRouter.patch(
       .strict()
       .safeParse(request.body);
     if (!parsed.success) return response.status(400).json({ error: "Invalid report status" });
-    const shopId = request.authUser!.shopId;
     const before = await prisma.stockReport.findFirst({
-      where: { id: request.params.id!, shopId },
+      where: shopWhere(request, { id: request.params.id! }),
     });
     if (!before) return response.status(404).json({ error: "Stock report not found" });
     if (before.status !== StockReportStatus.pending)
       return response.status(409).json({ error: "Stock report has already been reviewed" });
     const updated = await prisma.$transaction(async (tx) => {
       const row = await tx.stockReport.update({
-        where: { id: before.id },
+        where: shopWhere(request, { id: before.id }),
         data: {
           status: parsed.data.status,
           reviewedBy: request.authUser!.id,
@@ -402,8 +397,7 @@ stockRouter.patch(
         },
       });
       await tx.auditLog.create({
-        data: {
-          shopId,
+        data: shopData(request, {
           userId: request.authUser!.id,
           action: "stock.report_reviewed",
           entity: "stock_report",
@@ -411,7 +405,7 @@ stockRouter.patch(
           beforeJson: { status: before.status },
           afterJson: { status: row.status },
           ip: request.ip ?? null,
-        },
+        }),
       });
       return row;
     });

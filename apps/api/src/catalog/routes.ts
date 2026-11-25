@@ -3,6 +3,9 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { requirePermission, type AuthenticatedRequest } from "../auth/middleware.js";
+import { sessionShopId, shopData, shopRowWhere, shopWhere } from "../tenant-scope.js";
+import { dataUrlPrefix, isShopProductImage, readProductImage, storeProductImage } from "../files.js";
+import { readShopSettings } from "../shop-settings.js";
 
 const objectJson = z.record(z.string(), z.unknown()).default({});
 const imageUrlInput = z.union([
@@ -124,15 +127,14 @@ function audit(
   after: unknown,
 ) {
   return prisma.auditLog.create({
-    data: {
-      shopId: request.authUser!.shopId,
+    data: shopData(request, {
       userId: request.authUser!.id,
       action,
       entity,
       entityId,
       afterJson: after as Prisma.InputJsonValue,
       ip: request.ip ?? null,
-    },
+    }),
   });
 }
 function defined<T extends Record<string, unknown>>(value: T): T {
@@ -158,6 +160,7 @@ type CatalogVariantRecord = {
 };
 type CatalogProductRecord = {
   id: string;
+  shopId: string;
   name: string;
   description: string | null;
   attributesJson: unknown;
@@ -170,16 +173,16 @@ type CatalogProductRecord = {
 };
 
 export function publicProduct(product: CatalogProductRecord, admin: boolean) {
-  const imageSource = (imageUrl: string | null, id: string) =>
-    imageUrl?.startsWith("data:image/webp;base64,")
-      ? `/api/catalog/products/${id}/image`
+  const imageSource = (imageUrl: string | null, kind: "products" | "variants", id: string) =>
+    imageUrl?.startsWith(dataUrlPrefix) || isShopProductImage(product.shopId, imageUrl ?? "")
+      ? `/api/catalog/${kind}/${id}/image`
       : imageUrl;
   const serializeVariant = (variant: CatalogVariantRecord) => ({
     id: variant.id,
     sku: variant.sku,
     barcode: variant.barcode,
     attributes: variant.attributesJson,
-    imageUrl: variant.imageUrl,
+    imageUrl: imageSource(variant.imageUrl, "variants", variant.id),
     priceCents: variant.priceCents,
     ...(admin ? { costCents: variant.costCents } : {}),
     reorderLevel: variant.reorderLevel,
@@ -197,7 +200,7 @@ export function publicProduct(product: CatalogProductRecord, admin: boolean) {
     name: product.name,
     description: product.description,
     attributes: product.attributesJson,
-    imageUrl: imageSource(product.imageUrl, product.id),
+    imageUrl: imageSource(product.imageUrl, "products", product.id),
     active: product.active,
     department: product.department,
     productType: product.productType,
@@ -242,16 +245,48 @@ catalogRouter.get(
     if (!z.string().uuid().safeParse(request.params.id).success)
       return response.status(400).json({ error: "Invalid product id" });
     const product = await prisma.product.findFirst({
-      where: { id: request.params.id!, shopId: request.authUser!.shopId },
+      where: shopWhere(request, { id: request.params.id! }),
       select: { imageUrl: true },
     });
-    const prefix = "data:image/webp;base64,";
-    if (!product?.imageUrl?.startsWith(prefix))
+    if (!product?.imageUrl) return response.status(404).json({ error: "Product photo not found" });
+    try {
+      const image = product.imageUrl.startsWith(dataUrlPrefix)
+        ? Buffer.from(product.imageUrl.slice(dataUrlPrefix.length), "base64")
+        : isShopProductImage(sessionShopId(request), product.imageUrl)
+          ? await readProductImage(sessionShopId(request), product.imageUrl)
+          : null;
+      if (!image) return response.status(404).json({ error: "Product photo not found" });
+      response.setHeader("Cache-Control", "private, max-age=86400, immutable");
+      return response.type("image/webp").send(image);
+    } catch {
       return response.status(404).json({ error: "Product photo not found" });
-    response.setHeader("Cache-Control", "private, max-age=86400, immutable");
-    return response
-      .type("image/webp")
-      .send(Buffer.from(product.imageUrl.slice(prefix.length), "base64"));
+    }
+  },
+);
+
+catalogRouter.get(
+  "/variants/:id/image",
+  requirePermission("stock.read"),
+  async (request: AuthenticatedRequest, response) => {
+    if (!z.string().uuid().safeParse(request.params.id).success)
+      return response.status(400).json({ error: "Invalid variant id" });
+    const variant = await prisma.productVariant.findFirst({
+      where: shopWhere(request, { id: request.params.id! }),
+      select: { imageUrl: true },
+    });
+    if (!variant?.imageUrl) return response.status(404).json({ error: "Variant photo not found" });
+    try {
+      const image = variant.imageUrl.startsWith(dataUrlPrefix)
+        ? Buffer.from(variant.imageUrl.slice(dataUrlPrefix.length), "base64")
+        : isShopProductImage(sessionShopId(request), variant.imageUrl)
+          ? await readProductImage(sessionShopId(request), variant.imageUrl)
+          : null;
+      if (!image) return response.status(404).json({ error: "Variant photo not found" });
+      response.setHeader("Cache-Control", "private, max-age=86400, immutable");
+      return response.type("image/webp").send(image);
+    } catch {
+      return response.status(404).json({ error: "Variant photo not found" });
+    }
   },
 );
 
@@ -259,27 +294,34 @@ catalogRouter.get(
   "/",
   requirePermission("stock.read"),
   async (request: AuthenticatedRequest, response) => {
-    const shopId = request.authUser!.shopId;
     response.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
-    const [departments, productTypes, brands, products, bundles] = await Promise.all([
-      prisma.department.findMany({ where: { shopId }, orderBy: { name: "asc" } }),
-      prisma.productType.findMany({ where: { shopId }, orderBy: { name: "asc" } }),
-      prisma.brand.findMany({ where: { shopId }, orderBy: { name: "asc" } }),
+    const [departments, productTypes, brands, products, bundles, shop] = await Promise.all([
+      prisma.department.findMany({ where: shopWhere(request, {}), orderBy: { name: "asc" } }),
+      prisma.productType.findMany({ where: shopWhere(request, {}), orderBy: { name: "asc" } }),
+      prisma.brand.findMany({ where: shopWhere(request, {}), orderBy: { name: "asc" } }),
       prisma.product.findMany({
-        where: { shopId },
+        where: shopWhere(request, {}),
         include: {
           department: true,
           productType: true,
           brand: true,
-          variants: { include: { stockLevels: { where: { shopId } } } },
+          variants: {
+            where: shopWhere(request, {}),
+            include: { stockLevels: { where: shopWhere(request, {}) } },
+          },
         },
         orderBy: { name: "asc" },
       }),
       prisma.bundleItem.findMany({
-        where: { shopId },
+        where: shopWhere(request, {}),
         select: { bundleVariantId: true, componentVariantId: true, quantity: true },
       }),
+      prisma.shop.findUniqueOrThrow({
+        where: shopRowWhere(request, {}),
+        select: { settingsJson: true },
+      }),
     ]);
+    const settings = readShopSettings(shop.settingsJson);
     const isAdmin = request.authUser!.role.name === "admin";
     return response.json({
       departments,
@@ -287,6 +329,11 @@ catalogRouter.get(
       brands,
       products: products.map((product) => publicProduct(product, isAdmin)),
       bundles,
+      taxSettings: {
+        enabled: settings.tax_enabled === true,
+        rateBps: typeof settings.tax_rate_bps === "number" ? settings.tax_rate_bps : 0,
+        inclusive: settings.tax_inclusive === true,
+      },
     });
   },
 );
@@ -301,7 +348,7 @@ catalogRouter.post(
         .status(400)
         .json({ error: "Invalid department", details: parsed.error.flatten() });
     const row = await prisma.department.create({
-      data: { ...parsed.data, shopId: request.authUser!.shopId },
+      data: shopData(request, parsed.data),
     });
     await audit(request, "catalog.department_created", "department", row.id, row);
     return response.status(201).json(row);
@@ -314,11 +361,11 @@ catalogRouter.patch(
     const parsed = departmentPatchInput.safeParse(request.body);
     if (!parsed.success || !Object.keys(request.body ?? {}).length)
       return response.status(400).json({ error: "Invalid department update" });
-    const where = { id: request.params.id!, shopId: request.authUser!.shopId };
+    const where = shopWhere(request, { id: request.params.id! });
     const before = await prisma.department.findFirst({ where });
     if (!before) return response.status(404).json({ error: "Department not found" });
     const updated = await prisma.department.update({
-      where: { id: before.id },
+      where: shopWhere(request, { id: before.id }),
       data: defined(parsed.data) as Prisma.DepartmentUncheckedUpdateInput,
     });
     await audit(request, "catalog.department_updated", "department", updated.id, {
@@ -340,7 +387,7 @@ catalogRouter.post(
     const data = parsed.data;
     const row = await prisma.productType.create({
       data: {
-        shopId: request.authUser!.shopId,
+        ...shopData(request, {}),
         name: data.name,
         code: data.code,
         parentId: data.parentId ?? null,
@@ -360,20 +407,19 @@ catalogRouter.patch(
     const parsed = typePatchInput.safeParse(request.body);
     if (!parsed.success || !Object.keys(request.body ?? {}).length)
       return response.status(400).json({ error: "Invalid product type update" });
-    const shopId = request.authUser!.shopId;
-    const where = { id: request.params.id!, shopId };
+    const where = shopWhere(request, { id: request.params.id! });
     const before = await prisma.productType.findFirst({ where });
     if (!before) return response.status(404).json({ error: "Product type not found" });
     if (parsed.data.parentId) {
       const parent = await prisma.productType.findFirst({
-        where: { id: parsed.data.parentId, shopId },
+        where: shopWhere(request, { id: parsed.data.parentId }),
       });
       if (!parent)
         return response.status(400).json({ error: "Parent type must belong to this shop" });
     }
     const { attributeTemplate, ...fields } = parsed.data;
     const updated = await prisma.productType.update({
-      where: { id: before.id },
+      where: shopWhere(request, { id: before.id }),
       data: defined({
         ...fields,
         ...(attributeTemplate
@@ -398,7 +444,7 @@ catalogRouter.post(
       .safeParse(request.body);
     if (!parsed.success) return response.status(400).json({ error: "Invalid brand" });
     const row = await prisma.brand.create({
-      data: { ...parsed.data, shopId: request.authUser!.shopId },
+      data: shopData(request, parsed.data),
     });
     await audit(request, "catalog.brand_created", "brand", row.id, row);
     return response.status(201).json(row);
@@ -414,12 +460,12 @@ catalogRouter.post(
         .status(400)
         .json({ error: "Invalid product", details: parsed.error.flatten() });
     const input = parsed.data;
-    const shopId = request.authUser!.shopId;
+    const shopId = sessionShopId(request);
     const [department, productType, brand] = await Promise.all([
-      prisma.department.findFirst({ where: { id: input.departmentId, shopId } }),
-      prisma.productType.findFirst({ where: { id: input.productTypeId, shopId } }),
+      prisma.department.findFirst({ where: shopWhere(request, { id: input.departmentId }) }),
+      prisma.productType.findFirst({ where: shopWhere(request, { id: input.productTypeId }) }),
       input.brandId
-        ? prisma.brand.findFirst({ where: { id: input.brandId, shopId } })
+        ? prisma.brand.findFirst({ where: shopWhere(request, { id: input.brandId }) })
         : Promise.resolve(true),
     ]);
     if (!department || !productType || !brand)
@@ -445,7 +491,7 @@ catalogRouter.post(
     );
     if (bulkIds.length) {
       const bulkVariants = await prisma.productVariant.findMany({
-        where: { shopId, id: { in: bulkIds } },
+        where: shopWhere(request, { id: { in: bulkIds } }),
         include: { product: { include: { productType: true } } },
       });
       if (
@@ -459,28 +505,30 @@ catalogRouter.post(
           .status(400)
           .json({ error: "Decants must link to an existing perfume bulk variant in this shop" });
     }
+    const productImageUrl = await storeProductImage(shopId, input.imageUrl);
+    const variantImageUrls = await Promise.all(
+      input.variants.map((item) => storeProductImage(shopId, item.imageUrl)),
+    );
     const created = await prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
-        data: {
-          shopId,
+        data: shopData(request, {
           departmentId: input.departmentId,
           productTypeId: input.productTypeId,
           brandId: input.brandId ?? null,
           name: input.name,
           description: input.description ?? null,
           attributesJson: input.attributes as Prisma.InputJsonValue,
-          imageUrl: input.imageUrl ?? null,
-        },
+          imageUrl: productImageUrl ?? null,
+        }),
       });
-      for (const item of input.variants)
+      for (const [index, item] of input.variants.entries())
         await tx.productVariant.create({
-          data: {
-            shopId,
+          data: shopData(request, {
             productId: product.id,
             sku: item.sku,
             barcode: item.barcode ?? null,
             attributesJson: item.attributes as Prisma.InputJsonValue,
-            imageUrl: item.imageUrl ?? null,
+            imageUrl: variantImageUrls[index] ?? null,
             priceCents: item.priceCents,
             costCents: item.costCents,
             reorderLevel: item.reorderLevel,
@@ -492,18 +540,17 @@ catalogRouter.post(
             mlPerUnit: item.mlPerUnit ?? null,
             isTesterAllowed: item.isTesterAllowed,
             isTester: item.isTester,
-          },
+          }),
         });
       await tx.auditLog.create({
-        data: {
-          shopId,
+        data: shopData(request, {
           userId: request.authUser!.id,
           action: "catalog.product_created",
           entity: "product",
           entityId: product.id,
           afterJson: { name: product.name, variantCount: input.variants.length },
           ip: request.ip ?? null,
-        },
+        }),
       });
       return product;
     });
@@ -519,18 +566,20 @@ catalogRouter.patch(
       return response
         .status(400)
         .json({ error: "Invalid product update", details: parsed.error.flatten() });
-    const shopId = request.authUser!.shopId;
-    const before = await prisma.product.findFirst({ where: { id: request.params.id!, shopId } });
+    const shopId = sessionShopId(request);
+    const before = await prisma.product.findFirst({
+      where: shopWhere(request, { id: request.params.id! }),
+    });
     if (!before) return response.status(404).json({ error: "Product not found" });
     const [department, productType, brand] = await Promise.all([
       parsed.data.departmentId
-        ? prisma.department.findFirst({ where: { id: parsed.data.departmentId, shopId } })
+        ? prisma.department.findFirst({ where: shopWhere(request, { id: parsed.data.departmentId }) })
         : Promise.resolve(true),
       parsed.data.productTypeId
-        ? prisma.productType.findFirst({ where: { id: parsed.data.productTypeId, shopId } })
+        ? prisma.productType.findFirst({ where: shopWhere(request, { id: parsed.data.productTypeId }) })
         : Promise.resolve(true),
       parsed.data.brandId
-        ? prisma.brand.findFirst({ where: { id: parsed.data.brandId, shopId } })
+        ? prisma.brand.findFirst({ where: shopWhere(request, { id: parsed.data.brandId }) })
         : Promise.resolve(true),
     ]);
     if (!department || !productType || !brand)
@@ -538,11 +587,16 @@ catalogRouter.patch(
         .status(400)
         .json({ error: "Department, product type, and brand must belong to this shop" });
     const { attributes, ...fields } = parsed.data;
+    const imageUrl = await storeProductImage(shopId, fields.imageUrl);
     const data = defined({
       ...fields,
+      ...(fields.imageUrl !== undefined ? { imageUrl } : {}),
       ...(attributes ? { attributesJson: attributes as Prisma.InputJsonValue } : {}),
     }) as Prisma.ProductUncheckedUpdateInput;
-    const updated = await prisma.product.update({ where: { id: before.id }, data });
+    const updated = await prisma.product.update({
+      where: shopWhere(request, { id: before.id }),
+      data,
+    });
     await audit(request, "catalog.product_updated", "product", updated.id, {
       before,
       after: updated,
@@ -560,21 +614,23 @@ catalogRouter.patch(
         error: "Invalid variant update",
         details: parsed.success ? undefined : parsed.error.flatten(),
       });
-    const shopId = request.authUser!.shopId;
+    const shopId = sessionShopId(request);
     const before = await prisma.productVariant.findFirst({
-      where: { id: request.params.id!, shopId },
+      where: shopWhere(request, { id: request.params.id! }),
     });
     if (!before) return response.status(404).json({ error: "Variant not found" });
     const { attributes, expiryDate, ...fields } = parsed.data;
     if (parsed.data.isTester === true && parsed.data.isTesterAllowed === true)
       return response.status(400).json({ error: "Tester variants cannot be sellable" });
+    const imageUrl = await storeProductImage(shopId, fields.imageUrl);
     const updateData = defined({
       ...fields,
+      ...(fields.imageUrl !== undefined ? { imageUrl } : {}),
       ...(attributes ? { attributesJson: attributes as Prisma.InputJsonValue } : {}),
       ...(expiryDate !== undefined ? { expiryDate: expiryDate ? new Date(expiryDate) : null } : {}),
     }) as Prisma.ProductVariantUncheckedUpdateInput;
     const updated = await prisma.productVariant.update({
-      where: { id: before.id },
+      where: shopWhere(request, { id: before.id }),
       data: updateData,
     });
     await audit(request, "catalog.variant_updated", "product_variant", updated.id, {
@@ -593,7 +649,6 @@ catalogRouter.post(
       return response
         .status(400)
         .json({ error: "Invalid bundle", details: parsed.error.flatten() });
-    const shopId = request.authUser!.shopId;
     const ids = [
       parsed.data.bundleVariantId,
       ...parsed.data.components.map((item) => item.variantId),
@@ -601,7 +656,7 @@ catalogRouter.post(
     if (new Set(ids).size !== ids.length)
       return response.status(400).json({ error: "Bundle and component variants must be distinct" });
     const variants = await prisma.productVariant.findMany({
-      where: { shopId, id: { in: ids } },
+      where: shopWhere(request, { id: { in: ids } }),
       include: { product: { include: { productType: true } } },
     });
     if (variants.length !== ids.length)
@@ -615,25 +670,25 @@ catalogRouter.post(
         .status(400)
         .json({ error: "Bundle product must use the gift sets product type" });
     await prisma.$transaction(async (tx) => {
-      await tx.bundleItem.deleteMany({ where: { shopId, bundleVariantId: bundle.id } });
+      await tx.bundleItem.deleteMany({
+        where: shopWhere(request, { bundleVariantId: bundle.id }),
+      });
       await tx.bundleItem.createMany({
-        data: parsed.data.components.map((item) => ({
-          shopId,
+        data: parsed.data.components.map((item) => shopData(request, {
           bundleVariantId: bundle.id,
           componentVariantId: item.variantId,
           quantity: item.quantity,
         })),
       });
       await tx.auditLog.create({
-        data: {
-          shopId,
+        data: shopData(request, {
           userId: request.authUser!.id,
           action: "catalog.bundle_updated",
           entity: "product_variant",
           entityId: bundle.id,
           afterJson: parsed.data as Prisma.InputJsonValue,
           ip: request.ip ?? null,
-        },
+        }),
       });
     });
     return response.status(204).end();

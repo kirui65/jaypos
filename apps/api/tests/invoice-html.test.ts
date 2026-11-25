@@ -7,10 +7,7 @@ const sampleInput = {
   receiptFooter: "Thank you for shopping with us.",
   sale: {
     shop: {
-      name: "Eminent Jay",
-      address: "Nairobi",
-      phone: "+254700000000",
-      kraPin: null,
+      settingsJson: { brand_name: "Test Shop", address: "Nairobi", phone: "+254700000000" },
     },
     receiptNo: "EJ-000042",
     createdAt: new Date("2026-11-24T08:00:00Z"),
@@ -52,7 +49,7 @@ describe("sales invoice preview", () => {
       invoiceTerms: "<script>alert(1)</script>",
       sale: {
         ...sampleInput.sale,
-        shop: { ...sampleInput.sale.shop, name: "<img src=x onerror=alert(1)>" },
+        shop: { ...sampleInput.sale.shop, settingsJson: { brand_name: "<img src=x onerror=alert(1)>" } },
         customer: { ...sampleInput.sale.customer, name: "<b>Customer</b>" },
         items: [
           {

@@ -17,9 +17,7 @@ export function ProgressiveImage({
 }) {
   const [loaded, setLoaded] = useState(false);
   return (
-    <img
-      src={src}
-      alt={alt}
+    <img src={src} alt={alt}
       width={width}
       height={height}
       crossOrigin={crossOrigin}

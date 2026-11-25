@@ -2,11 +2,13 @@
 
 Read `/docs/SPEC.md`, `/docs/BACKLOG.md` and `/docs/design-reference/STYLE_GUIDE.md` first. Both features below are **[ADD-ON]** (not in the original 150k scope) and must follow every global rule in BACKLOG.md (tokens only, two roles, staff never see cost or profit, audit everything, tests, `bash scripts/audit.sh` clean).
 
-This addendum **overrides** the earlier "one shop only" assumption. **N16 is approved as the business model: many shops, each paying KSh 2,000 per month.** Build in the order given at the bottom. Write the plan first and wait for review before coding the multi-tenant changes.
+**Current scope: one shop.** N16 is deferred until a second shop is signed. Its previously approved KSh 2,000 per-shop monthly price is retained for future planning. Implement N15 as a single-shop feature. Follow the current build order at the bottom.
 
 ---
 
 ## N15 Quotations
+
+**Current scope: one shop.** Implement quotations for the existing shop only; do not make signup, billing, platform-console, or multi-tenant changes a prerequisite.
 
 ### Why
 The shop quotes jobs (events, decor, bouquets, gift hampers, bulk orders) before the customer pays. A quote needs custom lines, a validity date, a deposit, a branded PDF, and a one-tap conversion into a sale.
@@ -48,7 +50,9 @@ A staff member can create a quote with catalog and custom lines, send the PDF on
 
 ---
 
-## N16 Subscription model (multi-tenant) - APPROVED: KSh 2,000 per month per shop
+## N16 Subscription model (multi-tenant) - DEFERRED until a second shop is signed
+
+**Status: DEFERRED.** The current product is for one shop. Do not implement N16, multi-tenancy, signup, subscription billing, or the platform console until a second shop is signed. The previously approved KSh 2,000 per-shop monthly price is retained for when this scope is resumed.
 
 ### Business model (confirmed by the client; implement as configuration, not constants)
 The client wants to monetise the app with a subscription of **KSh 2,000 per month** (per shop; keep the amount in the `plans` table, never hard-coded). Treat this as: **many independent shops use the same hosted app and each pays the subscription**. The plan price, trial length, grace period, seat limits, and feature flags live in a `plans` table so they can change without code changes.
@@ -87,10 +91,10 @@ Two shops cannot see each other's data (proved by the automated test suite); tri
 
 ---
 
-## Required order (N16 approved)
-1. Finish the restyle and the tablet-first pass (in progress).
-2. **N16a, multi-tenant foundation first** (before more screens are built): write `/docs/MULTITENANCY_PLAN.md` (migration steps, tenant isolation and RLS design, cross-tenant test plan, risks, estimate) and **wait for my review**. Then implement: session-scoped `shop_id` on every query, RLS, per-shop uniqueness, per-shop settings and encrypted payment credentials, the `platform_owner` role, shop #1 migration, two-shop seeds and tests, and the automated cross-tenant test suite.
-3. **N10 offline mode**, built tenant-aware.
-4. **N15 quotations**, built tenant-aware.
-5. **N16b:** signup and onboarding, billing and reminders, subscription lifecycle, the platform console, legal drafts.
-6. Remaining backlog items.
+## Current build order
+1. Finish the restyle and tablet-first pass.
+2. N10 offline mode for the existing shop.
+3. N15 quotations as a single-shop feature.
+4. Continue with the remaining backlog.
+
+N16 remains deferred until a second shop is signed. Do not treat the earlier multi-tenant architecture or billing steps above as current implementation requirements.

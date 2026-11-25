@@ -8,20 +8,12 @@ const errorBox = document.getElementById("login-error")!;
 const submitButton = document.getElementById("login-submit") as HTMLButtonElement;
 let disposeLoginShader: (() => void) | undefined;
 
-function dismissBootSplash() {
-  const splash = document.getElementById("boot-splash");
-  if (!splash || splash.classList.contains("boot-splash-hidden")) return;
-  splash.classList.add("boot-splash-hidden");
-  window.setTimeout(() => splash.remove(), 220);
-}
-
 async function openShell() {
   document.body.classList.remove("public-login");
   disposeLoginShader?.();
   root.innerHTML = '<main class="app-loading" aria-live="polite"><span class="spinner"></span><span>Opening your shop</span></main>';
   const { mountShell } = await import("./AuthenticatedShell.js");
   mountShell(root);
-  requestAnimationFrame(dismissBootSplash);
 }
 
 function scheduleLoginShader() {
@@ -49,7 +41,6 @@ function scheduleLoginShader() {
 if (import.meta.env.DEV && window.location.pathname === "/design") {
   void openShell();
 } else {
-  window.setTimeout(dismissBootSplash, 320);
   if (import.meta.env.DEV) reportWebVitals();
   if (window.location.pathname === "/") scheduleLoginShader();
   void fetch(`${API_URL}/api/brand`)

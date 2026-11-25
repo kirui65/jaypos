@@ -51,6 +51,7 @@ export async function requireAuth(
     !session ||
     session.revokedAt ||
     session.expiresAt <= new Date() ||
+    session.shopId !== session.user.shopId ||
     !session.user.active ||
     session.user.archivedAt
   ) {

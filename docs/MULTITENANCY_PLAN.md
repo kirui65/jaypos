@@ -1,8 +1,8 @@
 # Multi-tenancy plan (N16a)
 
-**Status:** planning only; no implementation is authorized until this plan is approved.  
-**Business decision:** N16 is approved: many independent shops, each paying a configurable KSh 2,000 per month. Keep the amount in plan data, never in application constants.  
-**Order:** establish tenant isolation first, then build N10 offline mode, N15 quotations, and N16b signup, billing, and the full platform console.
+**Status: DEFERRED until a second shop is signed. Do not implement this plan now.**  
+**Current product scope:** one shop. The previously approved multi-shop subscription model remains deferred; if resumed, keep its price configurable in plan data.  
+**Current build order:** finish the restyle and tablet pass, then N10 offline, then N15 single-shop quotations, then the remaining backlog.
 
 ## 1. Current baseline and target
 

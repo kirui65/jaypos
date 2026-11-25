@@ -11,10 +11,11 @@ import { createLipwaCallbackRouter, createPaymentsRouter } from "./payments/rout
 import { getPaymentProvider } from "./payments/provider.js";
 import { refundsRouter } from "./refunds/routes.js";
 import { prisma } from "./db.js";
+import { customersRouter } from "./customers/routes.js";
 
 const healthResponseSchema = z.object({
   status: z.literal("ok"),
-  service: z.literal("eminent-jay-api"),
+  service: z.literal("retail-pos-api"),
 });
 
 export function createApp() {
@@ -56,17 +57,20 @@ export function createApp() {
   });
   app.use(express.json({ limit: "1mb" }));
   app.get("/health", (_request, response) => {
-    response.json(healthResponseSchema.parse({ status: "ok", service: "eminent-jay-api" }));
+    response.json(healthResponseSchema.parse({ status: "ok", service: "retail-pos-api" }));
   });
   app.get("/api/brand", async (_request, response) => {
-    const shop = await prisma.shop.findFirst({ select: { name: true, logoUrl: true, settingsJson: true } });
+    const publicShopSlug = process.env.PUBLIC_SHOP_SLUG;
+    const shop = publicShopSlug
+      ? await prisma.shop.findUnique({ where: { slug: publicShopSlug }, select: { settingsJson: true } })
+      : null;
     const settings = shop?.settingsJson && typeof shop.settingsJson === "object" && !Array.isArray(shop.settingsJson)
       ? shop.settingsJson as Record<string, unknown>
       : {};
     response.setHeader("Cache-Control", "public, max-age=60");
     return response.json({
-      brandName: typeof settings.brand_name === "string" ? settings.brand_name : shop?.name ?? "Shop",
-      logoUrl: typeof settings.logo_url === "string" ? settings.logo_url : shop?.logoUrl ?? null,
+      brandName: typeof settings.brand_name === "string" ? settings.brand_name : "Shop",
+      logoUrl: typeof settings.logo_url === "string" ? settings.logo_url : null,
     });
   });
   app.use("/api/auth", authRouter);
@@ -74,6 +78,7 @@ export function createApp() {
   app.use("/api/payments/lipwa/callback", createLipwaCallbackRouter(paymentProvider));
   app.use("/api", requireAuth);
   app.use("/api/catalog", catalogRouter);
+  app.use("/api/customers", customersRouter);
   app.use("/api/stock", stockRouter);
   app.use("/api/sales", salesRouter);
   app.use("/api/shifts", shiftsRouter);

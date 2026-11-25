@@ -6,7 +6,7 @@ describe("GET /health", () => {
   it("returns the API health status", async () => {
     const response = await request(createApp()).get("/health");
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ status: "ok", service: "eminent-jay-api" });
+    expect(response.body).toEqual({ status: "ok", service: "retail-pos-api" });
   });
 });
 

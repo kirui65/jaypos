@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { allocateSalePayments, calculateSaleTotals } from "../src/sales/math.js";
+import { allocateSalePayments, calculateSaleTotals, calculateTaxCents } from "../src/sales/math.js";
 import { planStockDemands } from "../src/sales/inventory.js";
 import { serializeSale } from "../src/sales/routes.js";
 
 describe("sale calculations", () => {
+  it("calculates tax from enabled shop settings and keeps it off by default", () => {
+    expect(calculateTaxCents(10_000, false, 1600, false)).toBe(0);
+    expect(calculateTaxCents(10_000, true, 1600, false)).toBe(1600);
+    expect(calculateTaxCents(10_000, true, 1600, true)).toBe(1379);
+  });
+
   it("calculates server-owned prices and discounts in integer cents", () => {
     expect(
       calculateSaleTotals(
