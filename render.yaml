@@ -13,7 +13,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: WEB_ORIGIN
-        value: https://jaypos-oqmo.onrender.com
+        value: https://liz.jaypos.co.ke,https://jaypos-oqmo.onrender.com
       - key: PUBLIC_SHOP_SLUG
         value: main
       - key: ADMIN_SEED_EMAIL
@@ -27,6 +27,6 @@ services:
       - key: PAYMENT_PROVIDER
         value: lipwa
       - key: LIPWA_CALLBACK_URL
-        value: https://jaypos-oqmo.onrender.com/api/payments/lipwa/callback
+        value: https://liz.jaypos.co.ke/api/payments/lipwa/callback
       - key: UPLOADS_DIR
         value: ./uploads

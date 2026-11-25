@@ -40,6 +40,16 @@ const webContentSecurityPolicy = [
   "worker-src 'self' blob:",
 ].join("; ");
 
+function getAllowedOrigins(): string[] {
+  const configuredOrigins = (process.env.WEB_ORIGIN ?? "http://localhost:5173")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  const developmentOrigins =
+    process.env.NODE_ENV === "production" ? [] : ["http://localhost:4173", "http://127.0.0.1:4173"];
+  return [...new Set([...configuredOrigins, ...developmentOrigins])];
+}
+
 export function createApp() {
   const app = express();
   app.disable("x-powered-by");
@@ -53,8 +63,7 @@ export function createApp() {
   });
   app.use((request, response, next) => {
     const origin = request.get("origin");
-    const expectedOrigin = process.env.WEB_ORIGIN ?? "http://localhost:5173";
-    const allowedOrigins = [expectedOrigin, ...(process.env.NODE_ENV === "production" ? [] : ["http://localhost:4173", "http://127.0.0.1:4173"])];
+    const allowedOrigins = getAllowedOrigins();
     if (origin && allowedOrigins.includes(origin)) {
       response.setHeader("Access-Control-Allow-Origin", origin);
       response.setHeader("Access-Control-Allow-Credentials", "true");
@@ -71,8 +80,7 @@ export function createApp() {
   app.use((request, response, next) => {
     if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return next();
     const origin = request.get("origin");
-    const expectedOrigin = process.env.WEB_ORIGIN ?? "http://localhost:5173";
-    const allowedOrigins = [expectedOrigin, ...(process.env.NODE_ENV === "production" ? [] : ["http://localhost:4173", "http://127.0.0.1:4173"])];
+    const allowedOrigins = getAllowedOrigins();
     if (origin && !allowedOrigins.includes(origin))
       return response.status(403).json({ error: "Origin not allowed" });
     next();

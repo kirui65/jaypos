@@ -1,6 +1,6 @@
 # Deployment
 
-The Render web service serves both the Vite app and Express API from the same HTTPS origin. PostgreSQL stays in the linked Supabase project. The public repo is [kirui65/jaypos](https://github.com/kirui65/jaypos) and the Render URL is https://jaypos-oqmo.onrender.com. The service is created with automatic deploys disabled until database settings are complete.
+The Render web service serves both the Vite app and Express API from the same HTTPS origin. PostgreSQL stays in the linked Supabase project. The public repo is [kirui65/jaypos](https://github.com/kirui65/jaypos); the primary custom domain is https://liz.jaypos.co.ke, with https://jaypos-oqmo.onrender.com as a fallback. `WEB_ORIGIN` accepts a comma-separated list of allowed origins.
 
 ## Initial setup
 
