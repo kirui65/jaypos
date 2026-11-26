@@ -22,4 +22,12 @@ describe("per-shop product file storage", () => {
       "File does not belong to this shop",
     );
   });
+
+  it("preserves a browser image fallback format when WebP encoding is unavailable", async () => {
+    root = await mkdtemp(path.join(tmpdir(), "retail-pos-files-"));
+    const key = await storeProductImage("shop-a", "data:image/png;base64,aGVsbG8=", root);
+
+    expect(key).toMatch(/^shops\/shop-a\/product-images\/.+\.png$/);
+    await expect(readProductImage("shop-a", key!, root)).resolves.toEqual(Buffer.from("hello"));
+  });
 });

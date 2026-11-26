@@ -4,7 +4,14 @@ import { z } from "zod";
 import { prisma } from "../db.js";
 import { requirePermission, type AuthenticatedRequest } from "../auth/middleware.js";
 import { sessionShopId, shopData, shopRowWhere, shopWhere } from "../tenant-scope.js";
-import { dataUrlPrefix, isShopProductImage, readProductImage, storeProductImage } from "../files.js";
+import {
+  decodeProductImageDataUrl,
+  isProductImageDataUrl,
+  isShopProductImage,
+  productImageContentType,
+  readProductImage,
+  storeProductImage,
+} from "../files.js";
 import { readShopSettings } from "../shop-settings.js";
 
 const objectJson = z.record(z.string(), z.unknown()).default({});
@@ -13,7 +20,7 @@ const imageUrlInput = z.union([
   z
     .string()
     .max(300_000)
-    .regex(/^data:image\/webp;base64,[A-Za-z0-9+/]+={0,2}$/),
+    .regex(/^data:image\/(?:webp|jpeg|png);base64,[A-Za-z0-9+/]+={0,2}$/),
 ]);
 const departmentInput = z
   .object({
@@ -174,7 +181,7 @@ type CatalogProductRecord = {
 
 export function publicProduct(product: CatalogProductRecord, admin: boolean) {
   const imageSource = (imageUrl: string | null, kind: "products" | "variants", id: string) =>
-    imageUrl?.startsWith(dataUrlPrefix) || isShopProductImage(product.shopId, imageUrl ?? "")
+    (imageUrl && isProductImageDataUrl(imageUrl)) || isShopProductImage(product.shopId, imageUrl ?? "")
       ? `/api/catalog/${kind}/${id}/image`
       : imageUrl;
   const serializeVariant = (variant: CatalogVariantRecord) => ({
@@ -250,14 +257,16 @@ catalogRouter.get(
     });
     if (!product?.imageUrl) return response.status(404).json({ error: "Product photo not found" });
     try {
-      const image = product.imageUrl.startsWith(dataUrlPrefix)
-        ? Buffer.from(product.imageUrl.slice(dataUrlPrefix.length), "base64")
+      const image = isProductImageDataUrl(product.imageUrl)
+        ? decodeProductImageDataUrl(product.imageUrl).bytes
         : isShopProductImage(sessionShopId(request), product.imageUrl)
           ? await readProductImage(sessionShopId(request), product.imageUrl)
           : null;
       if (!image) return response.status(404).json({ error: "Product photo not found" });
       response.setHeader("Cache-Control", "private, max-age=86400, immutable");
-      return response.type("image/webp").send(image);
+      return response.type(isProductImageDataUrl(product.imageUrl)
+        ? decodeProductImageDataUrl(product.imageUrl).contentType
+        : productImageContentType(product.imageUrl)).send(image);
     } catch {
       return response.status(404).json({ error: "Product photo not found" });
     }
@@ -276,14 +285,16 @@ catalogRouter.get(
     });
     if (!variant?.imageUrl) return response.status(404).json({ error: "Variant photo not found" });
     try {
-      const image = variant.imageUrl.startsWith(dataUrlPrefix)
-        ? Buffer.from(variant.imageUrl.slice(dataUrlPrefix.length), "base64")
+      const image = isProductImageDataUrl(variant.imageUrl)
+        ? decodeProductImageDataUrl(variant.imageUrl).bytes
         : isShopProductImage(sessionShopId(request), variant.imageUrl)
           ? await readProductImage(sessionShopId(request), variant.imageUrl)
           : null;
       if (!image) return response.status(404).json({ error: "Variant photo not found" });
       response.setHeader("Cache-Control", "private, max-age=86400, immutable");
-      return response.type("image/webp").send(image);
+      return response.type(isProductImageDataUrl(variant.imageUrl)
+        ? decodeProductImageDataUrl(variant.imageUrl).contentType
+        : productImageContentType(variant.imageUrl)).send(image);
     } catch {
       return response.status(404).json({ error: "Variant photo not found" });
     }
@@ -443,9 +454,22 @@ catalogRouter.post(
       .strict()
       .safeParse(request.body);
     if (!parsed.success) return response.status(400).json({ error: "Invalid brand" });
-    const row = await prisma.brand.create({
-      data: shopData(request, parsed.data),
+    const existing = await prisma.brand.findFirst({
+      where: shopWhere(request, { name: { equals: parsed.data.name, mode: "insensitive" as const } }),
     });
+    if (existing) return response.json(existing);
+    let row: Awaited<ReturnType<typeof prisma.brand.create>>;
+    try {
+      row = await prisma.brand.create({
+        data: shopData(request, parsed.data),
+      });
+    } catch (error) {
+      const raced = await prisma.brand.findFirst({
+        where: shopWhere(request, { name: { equals: parsed.data.name, mode: "insensitive" as const } }),
+      });
+      if (raced) return response.json(raced);
+      throw error;
+    }
     await audit(request, "catalog.brand_created", "brand", row.id, row);
     return response.status(201).json(row);
   },

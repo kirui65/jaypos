@@ -3,6 +3,23 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const dataUrlPrefix = "data:image/webp;base64,";
+const productImageDataUrl = /^data:(image\/(?:webp|jpeg|png));base64,([A-Za-z0-9+/]+={0,2})$/;
+
+export function isProductImageDataUrl(value: string): boolean {
+  return productImageDataUrl.test(value);
+}
+
+export function decodeProductImageDataUrl(value: string): { contentType: string; bytes: Buffer } {
+  const match = productImageDataUrl.exec(value);
+  if (!match) throw new Error("Unsupported product image format");
+  return { contentType: match[1]!, bytes: Buffer.from(match[2]!, "base64") };
+}
+
+export function productImageContentType(key: string): string {
+  if (key.endsWith(".jpeg") || key.endsWith(".jpg")) return "image/jpeg";
+  if (key.endsWith(".png")) return "image/png";
+  return "image/webp";
+}
 
 function rootDirectory(root = process.env.UPLOADS_DIR ?? path.resolve(process.cwd(), "uploads")) {
   return path.resolve(root);
@@ -23,11 +40,13 @@ export async function storeProductImage(
   root?: string,
 ): Promise<string | null | undefined> {
   if (imageUrl === undefined || imageUrl === null || imageUrl === "") return imageUrl;
-  if (!imageUrl.startsWith(dataUrlPrefix)) return imageUrl;
-  const key = `shops/${shopId}/product-images/${randomUUID()}.webp`;
+  if (!isProductImageDataUrl(imageUrl)) return imageUrl;
+  const { contentType, bytes } = decodeProductImageDataUrl(imageUrl);
+  const extension = contentType === "image/jpeg" ? "jpg" : contentType.slice("image/".length);
+  const key = `shops/${shopId}/product-images/${randomUUID()}.${extension}`;
   const filePath = shopFilePath(shopId, key, root);
   await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, Buffer.from(imageUrl.slice(dataUrlPrefix.length), "base64"), { flag: "wx" });
+  await writeFile(filePath, bytes, { flag: "wx" });
   return key;
 }
 

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { PaymentMethod, PaymentStatus, Prisma, RefundStatus, SaleStatus } from "@prisma/client";
+import bcrypt from "bcryptjs";
+import { DiscountApprovalStatus, PaymentMethod, PaymentStatus, Prisma, RefundStatus, SaleStatus } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
 import { canAccess } from "../auth/permissions.js";
@@ -15,6 +16,7 @@ import {
   type SalePayment,
 } from "./math.js";
 import { renderInvoiceHtml } from "./invoice-html.js";
+import { cartItemsMatch, discountExceedsLimit, normalizedCartItems } from "./discounts.js";
 import { calculateProfitability } from "./profitability.js";
 import { planStockDemands } from "./inventory.js";
 import PDFDocument from "pdfkit";
@@ -42,6 +44,7 @@ const saleInput = z
     items: z.array(itemInput).min(1).max(200),
     cartDiscountCents: z.number().int().min(0).default(0),
     discountReason: z.string().trim().max(500).optional(),
+    discountApprovalRequestId: z.string().uuid().optional(),
     notes: z.string().trim().max(2000).optional(),
     payments: z
       .array(
@@ -84,6 +87,21 @@ const saleInput = z
     message: "Choose an existing customer or enter new customer details",
     path: ["customerDetails"],
   });
+
+const discountRequestInput = z.object({
+  items: z.array(z.object({
+    variantId: z.string().uuid(),
+    quantity: z.number().int().positive().max(500),
+  }).strict()).min(1).max(200),
+  discountCents: z.number().int().positive(),
+  reason: z.string().trim().min(3).max(500),
+}).strict();
+
+const discountApprovalInput = z.object({
+  username: z.string().trim().min(3).max(80),
+  pin: z.string().regex(/^\d{4,6}$/),
+}).strict();
+
 const documentSettingsInput = z
   .object({
     name: z.string().trim().min(1).max(120),
@@ -566,6 +584,163 @@ async function getSalesAnalysis(shopId: string, from: string, to: string) {
 }
 
 export const salesRouter = Router();
+salesRouter.post(
+  "/discount-requests",
+  requirePermission("sales.create"),
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = discountRequestInput.safeParse(request.body);
+    if (!parsed.success) return response.status(400).json({ error: "Invalid discount request" });
+    const user = request.authUser!;
+    if (user.role.name === "admin")
+      return response.status(400).json({ error: "Admins can apply discounts directly" });
+    const variantIds = parsed.data.items.map(({ variantId }) => variantId);
+    const variants = await prisma.productVariant.findMany({
+      where: shopWhere(request, { id: { in: variantIds } }),
+      select: { id: true, priceCents: true, active: true, product: { select: { active: true } } },
+    });
+    if (variants.length !== variantIds.length || variants.some((variant) => !variant.active || !variant.product.active))
+      return response.status(400).json({ error: "One or more cart items are no longer available" });
+    const variantById = new Map(variants.map((variant) => [variant.id, variant]));
+    const subtotalCents = parsed.data.items.reduce(
+      (sum, item) => sum + variantById.get(item.variantId)!.priceCents * item.quantity,
+      0,
+    );
+    if (parsed.data.discountCents >= subtotalCents)
+      return response.status(400).json({ error: "Discount must leave at least KES 0.01 to pay" });
+    if (!discountExceedsLimit(subtotalCents, parsed.data.discountCents, user.discountLimitPct))
+      return response.status(400).json({ error: "This discount is within your permitted limit" });
+
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const normalizedItems = normalizedCartItems(parsed.data.items);
+    const created = await prisma.$transaction(async (tx) => {
+      const discountRequest = await tx.discountApprovalRequest.create({
+        data: shopData(request, {
+          requesterId: user.id,
+          cartItemsJson: normalizedItems as Prisma.InputJsonValue,
+          discountCents: parsed.data.discountCents,
+          reason: parsed.data.reason,
+          expiresAt,
+        }),
+      });
+      await tx.auditLog.create({
+        data: shopData(request, {
+          userId: user.id,
+          action: "sales.discount_requested",
+          entity: "discount_approval_request",
+          entityId: discountRequest.id,
+          afterJson: {
+            discountCents: discountRequest.discountCents,
+            reason: discountRequest.reason,
+            itemCount: normalizedItems.length,
+            expiresAt: expiresAt.toISOString(),
+          },
+          ip: request.ip ?? null,
+        }),
+      });
+      return discountRequest;
+    });
+    return response.status(201).json({
+      request: { id: created.id, status: created.status, expiresAt: created.expiresAt },
+    });
+  },
+);
+
+salesRouter.post(
+  "/discount-requests/:id/approve",
+  requirePermission("sales.create"),
+  async (request: AuthenticatedRequest, response) => {
+    if (!z.string().uuid().safeParse(request.params.id).success)
+      return response.status(400).json({ error: "Invalid discount request" });
+    const parsed = discountApprovalInput.safeParse(request.body);
+    if (!parsed.success) return response.status(400).json({ error: "Enter an administrator username and PIN" });
+    const shopId = sessionShopId(request);
+    const username = parsed.data.username.toLowerCase();
+    const identifier = `discount-approval:${username}`;
+    const since = new Date(Date.now() - 15 * 60 * 1000);
+    const attempts = await prisma.loginAttempt.count({
+      where: businessWhere(shopId, {
+        identifier,
+        ip: request.ip || "unknown",
+        succeeded: false,
+        createdAt: { gte: since },
+      }),
+    });
+    if (attempts >= 5)
+      return response.status(429).json({ error: "Too many failed approval attempts. Try again in 15 minutes." });
+    const approver = await prisma.user.findFirst({
+      where: shopWhere(request, {
+        username: { equals: username, mode: "insensitive" as const },
+        role: { name: "admin" },
+        active: true,
+        archivedAt: null,
+      }),
+    });
+    const valid = Boolean(approver?.pinHash && await bcrypt.compare(parsed.data.pin, approver.pinHash));
+    await prisma.loginAttempt.create({
+      data: shopData(request, { identifier, ip: request.ip || "unknown", succeeded: valid }),
+    });
+    if (!valid || !approver) {
+      await prisma.auditLog.create({
+        data: shopData(request, {
+          userId: request.authUser!.id,
+          action: "sales.discount_approval_failed",
+          entity: "discount_approval_request",
+          entityId: request.params.id!,
+          afterJson: { approverUsername: username },
+          ip: request.ip ?? null,
+        }),
+      });
+      return response.status(401).json({ error: "Administrator username or PIN is incorrect" });
+    }
+
+    const now = new Date();
+    try {
+      const approved = await prisma.$transaction(async (tx) => {
+        const pending = await tx.discountApprovalRequest.findFirst({
+          where: shopWhere(request, { id: request.params.id! }),
+        });
+        if (!pending || pending.status !== DiscountApprovalStatus.requested || pending.expiresAt <= now)
+          throw new Error("This discount request has expired or was already handled");
+        const updated = await tx.discountApprovalRequest.updateMany({
+          where: shopWhere(request, {
+            id: pending.id,
+            status: DiscountApprovalStatus.requested,
+            expiresAt: { gt: now },
+          }),
+          data: {
+            status: DiscountApprovalStatus.approved,
+            approverId: approver.id,
+            approvedAt: now,
+          },
+        });
+        if (updated.count !== 1) throw new Error("This discount request has expired or was already handled");
+        await tx.auditLog.create({
+          data: shopData(request, {
+            userId: approver.id,
+            action: "sales.discount_approved",
+            entity: "discount_approval_request",
+            entityId: pending.id,
+            afterJson: {
+              requesterId: pending.requesterId,
+              discountCents: pending.discountCents,
+              approvedAt: now.toISOString(),
+            },
+            ip: request.ip ?? null,
+          }),
+        });
+        return pending;
+      });
+      return response.json({
+        request: { id: approved.id, status: DiscountApprovalStatus.approved, approvedBy: approver.name, expiresAt: approved.expiresAt },
+      });
+    } catch (error) {
+      return response.status(409).json({
+        error: error instanceof Error ? error.message : "Discount approval failed",
+      });
+    }
+  },
+);
+
 salesRouter.get(
   "/documents/settings",
   requirePermission("catalog.manage"),
@@ -980,6 +1155,8 @@ salesRouter.post(
               : 0;
           const taxInclusive = settings.tax_inclusive === true;
           const netTotalCents = total.subtotalCents - total.discountCents;
+          if (netTotalCents <= 0)
+            throw new Error("Discount must leave at least KES 0.01 to pay");
           const lineNetBeforeCart = lines.map(
             ({ input, unitPriceCents }) => unitPriceCents * input.quantity - input.discountCents,
           );
@@ -998,9 +1175,26 @@ salesRouter.post(
           const taxCents = lineTaxCents.reduce((sum, amount) => sum + amount, 0);
           const saleTotalCents = netTotalCents + (taxInclusive ? 0 : taxCents);
           const userDiscountLimit = user.role.name === "admin" ? 100 : user.discountLimitPct;
+          let approvedDiscountRequest: { id: string } | null = null;
+          if (parsed.data.discountApprovalRequestId) {
+            const approval = await tx.discountApprovalRequest.findFirst({
+              where: shopWhere(request, { id: parsed.data.discountApprovalRequestId }),
+            });
+            if (
+              !approval ||
+              approval.status !== DiscountApprovalStatus.approved ||
+              approval.requesterId !== user.id ||
+              approval.expiresAt <= new Date() ||
+              approval.discountCents !== total.discountCents ||
+              approval.reason !== parsed.data.discountReason ||
+              !cartItemsMatch(approval.cartItemsJson, parsed.data.items)
+            )
+              throw new Error("Approved discount does not match this cart or has expired");
+            approvedDiscountRequest = { id: approval.id };
+          }
           if (
-            total.subtotalCents > 0 &&
-            total.discountCents * 100 > total.subtotalCents * userDiscountLimit
+            discountExceedsLimit(total.subtotalCents, total.discountCents, userDiscountLimit) &&
+            !approvedDiscountRequest
           )
             throw new Error("Discount exceeds your permitted limit");
           const reasonThreshold =
@@ -1173,6 +1367,22 @@ salesRouter.post(
             }),
             include: saleInclude,
           });
+          if (approvedDiscountRequest) {
+            const consumed = await tx.discountApprovalRequest.updateMany({
+              where: shopWhere(request, {
+                id: approvedDiscountRequest.id,
+                status: DiscountApprovalStatus.approved,
+                usedAt: null,
+              }),
+              data: {
+                status: DiscountApprovalStatus.used,
+                saleId: sale.id,
+                usedAt: new Date(),
+              },
+            });
+            if (consumed.count !== 1)
+              throw new Error("Approved discount was already used for another sale");
+          }
           await tx.auditLog.create({
             data: shopData(request, {
               userId: user.id,
@@ -1184,6 +1394,7 @@ salesRouter.post(
                 totalCents: sale.totalCents,
                 discountCents: sale.discountCents,
                 discountReason: parsed.data.discountReason ?? null,
+                discountApprovalRequestId: approvedDiscountRequest?.id ?? null,
                 itemCount: sale.items.length,
                 paymentMethods: paymentRows.map(({ method }) => method),
                 awaitingStk: hasPendingStk,

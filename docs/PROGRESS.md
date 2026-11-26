@@ -2,6 +2,21 @@
 
 Last updated: 2026-11-26
 
+## Left-side navigation refinement (2026-11-26)
+
+- Moved the desktop route links into a grouped vertical sidebar on the left. The main header now holds the current page title, connectivity, shift, and user controls.
+- Kept the same role/permission filtering, tablet drawer, and phone quick tabs; the drawer lists the full vertical navigation.
+- Updated the browser audit to check the vertical sidebar and its links. Typecheck, lint, the production build, and 44 tests passed; 4 database-dependent tests were skipped. The focused responsive browser check passed on desktop, tablet, and phone, including opening and closing the tablet drawer.
+- `format:check` still reports repository-wide formatting differences across 45 files; unrelated files were not reformatted.
+
+## Pre-deploy POS refinements (2026-11-26)
+
+- Fixed product photo uploads to accept WebP, JPEG, and PNG data URLs, preserve the actual encoded format on disk, and retry client-side compression to fit the API limit. Product photos can be changed or removed while editing a product.
+- Changed brand entry to free text with optional name suggestions; unknown brands are created automatically. Added product editing for details and individual variants, including SKU, price, cost, attributes, and photo.
+- Added cart-level discounts at payment with a reason and server-enforced staff limits. Above-limit requests are audited, require an administrator username/PIN approval, expire after ten minutes, and can only be used once for the same requester and cart.
+- Switched the production sign-in form to username and PIN. Accounts without a PIN use their temporary password during setup, then configure a PIN; login fields disable password-manager autofill/save hints. Staff creation now requires a PIN.
+- Added API coverage for image format persistence, discount cart binding and limits, discount request/approval, and PIN authentication. Checks: 52 tests passed and 4 DB-dependent tests skipped; lint, typecheck, and production build passed. Three feature browser tests and the focused login browser test passed. Targeted Prettier checks passed; repository-wide `format:check` still reports style differences in 46 files, so unrelated files were left untouched.
+
 ## Public login refinement (2026-11-26)
 
 - Added the supplied Eminent Jay logo as the public login and password-change fallback while keeping a configured shop logo in front when one exists.

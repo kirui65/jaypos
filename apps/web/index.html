@@ -24,7 +24,7 @@
             <h1 id="login-title">Welcome back</h1>
             <p id="login-subtitle" class="muted">Manage inventory, reports and staff.</p>
           </header>
-          <form id="login-form" class="stack-form">
+          <form id="login-form" class="stack-form" autocomplete="off">
             <p id="login-role-label" class="login-field-label">Sign in as</p>
             <div class="role-selector" role="radiogroup" aria-labelledby="login-role-label">
               <button
@@ -49,12 +49,13 @@
               </button>
             </div>
             <label class="field">
-              <span>Username or email</span>
-              <input name="identifier" autocomplete="username" placeholder="Username or email" required />
+              <span>Username</span>
+              <input name="identifier" autocomplete="off" data-lpignore="true" data-1p-ignore="true" placeholder="Enter your username" required />
             </label>
             <label class="field">
-              <span>Password</span>
-              <input name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required />
+              <span>PIN</span>
+              <small>Use your temporary password once if you have not set a PIN yet.</small>
+              <input name="pin" type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" placeholder="Enter your PIN" required />
             </label>
             <div id="login-error" class="notice notice-error" role="alert" hidden></div>
             <button id="login-submit" class="button button-full button-lg">Sign in as Admin</button>

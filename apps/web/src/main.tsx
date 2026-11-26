@@ -113,7 +113,7 @@ if (import.meta.env.DEV && window.location.pathname === "/design") {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         identifier: data.get("identifier"),
-        password: data.get("password"),
+        pin: data.get("pin"),
         role: selectedRole,
       }),
     })

@@ -57,8 +57,8 @@ async function login(page: Page, creds: { user: string; pass: string }, role: 'a
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
   const roleButton = page.getByRole('radio', { name: role === 'admin' ? /admin/i : /cashier/i });
   if (await roleButton.isVisible()) await roleButton.click();
-  await page.getByLabel(/username|email/i).fill(creds.user);
-  await page.getByLabel(/password/i).fill(creds.pass);
+  await page.getByLabel(/username/i).fill(creds.user);
+  await page.getByLabel(/pin/i).fill(creds.pass);
   await page.getByRole('button', { name: /sign in|log in|login/i }).click();
   await page.waitForLoadState('networkidle');
   await page.locator('.app-shell').waitFor({ state: 'visible', timeout: 20_000 });
@@ -76,9 +76,9 @@ test('login role selector toggles between Admin and Cashier and submits selected
   await page.route('**/api/auth/me', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
   );
-  let submittedBody: { identifier?: string; password?: string; role?: string } | null = null;
+  let submittedBody: { identifier?: string; pin?: string; role?: string } | null = null;
   await page.route('**/api/auth/login', async (route) => {
-    submittedBody = route.request().postDataJSON() as { identifier?: string; password?: string; role?: string };
+    submittedBody = route.request().postDataJSON() as { identifier?: string; pin?: string; role?: string };
     await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'Role check reached' }) });
   });
 
@@ -102,13 +102,15 @@ test('login role selector toggles between Admin and Cashier and submits selected
   await adminRadio.press('ArrowRight');
   await expect(cashierRadio).toHaveAttribute('aria-checked', 'true');
 
-  await page.getByLabel(/username|email/i).fill('cashier@shop.local');
-  await page.getByLabel(/password/i).fill('secret-pass-123');
+  await expect(page.locator('form')).toHaveAttribute('autocomplete', 'off');
+  await expect(page.getByLabel('PIN')).toHaveAttribute('autocomplete', 'new-password');
+  await page.getByLabel('Username').fill('cashier');
+  await page.getByLabel('PIN').fill('2468');
   await page.getByRole('button', { name: 'Sign in as Cashier' }).click();
   await expect(page.getByRole('alert')).toHaveText('Role check reached');
   expect(submittedBody).toEqual({
-    identifier: 'cashier@shop.local',
-    password: 'secret-pass-123',
+    identifier: 'cashier',
+    pin: '2468',
     role: 'staff',
   });
 });
@@ -227,7 +229,7 @@ for (const role of ['public', 'admin', 'staff'] as const) {
             await expect(page.getByTestId('product-card').first()).toBeVisible({ timeout: 1_000 });
             const routeCls = await page.evaluate(() => (window as Window & { __ejRouteCls?: number }).__ejRouteCls ?? 0);
             expect(routeCls, 'POS route content should not shift while it loads').toBeLessThanOrEqual(0.1);
-            const navLinks = page.locator('nav.main-nav a');
+            const navLinks = page.locator('nav.sidebar-nav a');
             for (let index = 0; index < await navLinks.count(); index += 1) {
               await expect(navLinks.nth(index).locator('svg'), 'each navigation item has a Lucide icon').toHaveCount(1);
             }
@@ -423,6 +425,7 @@ test('POS restyle fits phone, tablet, and desktop with a mock shop session', asy
             role: 'admin',
             permissions: ['sales.create', 'sales.read.own', 'sales.read.all', 'stock.read', 'refunds.request', 'catalog.manage', 'staff.manage'],
             mustChangePassword: false,
+            hasPin: true,
             discountLimitPct: 10,
             active: true,
           } }
@@ -444,6 +447,8 @@ test('POS restyle fits phone, tablet, and desktop with a mock shop session', asy
 
   await page.setViewportSize({ width: 1366, height: 768 });
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  await expect(page.locator('.sidebar')).toBeVisible();
+  expect(await page.locator('.sidebar').evaluate((element) => getComputedStyle(element).flexDirection)).toBe('column');
   await expect(page.getByTestId('product-card').first()).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole('heading', { name: 'Your order' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Pay ·/ })).toBeInViewport();
@@ -505,6 +510,10 @@ test('POS restyle fits phone, tablet, and desktop with a mock shop session', asy
       await menu.click();
       await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Catalog' })).toBeVisible();
       await page.locator('.app-header .menu-toggle').click();
+      await page.waitForFunction(() => {
+        const sidebar = document.querySelector('.sidebar');
+        return sidebar && !sidebar.classList.contains('sidebar-open') && sidebar.getBoundingClientRect().right <= 0;
+      });
     } else {
       await expect(page.getByRole('navigation', { name: 'Quick navigation' })).toBeVisible();
     }

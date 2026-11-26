@@ -1,5 +1,12 @@
 # UI changelog
 
+## 2026-11-26 — Left-side vertical navigation
+
+- Moved the desktop navigation from the horizontal header into grouped Sell and Manage sections in a left sidebar.
+- Kept connectivity, shift, and user controls in the main header. Tablet navigation opens as a left drawer; phone quick tabs remain available.
+- Added a browser assertion for the desktop sidebar and kept the existing drawer and phone navigation checks.
+- The desktop, tablet, and phone POS layout check passed. Screenshots: [desktop](../audit/screenshots/restyle-pos-empty-1366x768.png), [tablet](../audit/screenshots/restyle-pos-tablet.png), [phone](../audit/screenshots/restyle-pos-phone.png).
+
 ## 2026-11-26 — Professional login refresh
 
 - Used the provided Eminent Jay wordmark as the default on sign-in and password-change screens, with configured shop logos still taking precedence.

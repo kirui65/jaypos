@@ -58,6 +58,13 @@ enum RefundDisposition {
   damaged
 }
 
+enum DiscountApprovalStatus {
+  requested
+  approved
+  rejected
+  used
+}
+
 enum CashMovementType {
   in
   out
@@ -112,6 +119,7 @@ model Shop {
   cashMovements  CashMovement[]
   stockReports   StockReport[]
   heldCarts      HeldCart[]
+  discountApprovalRequests DiscountApprovalRequest[]
   receiptCounter ReceiptCounter?
 
   @@map("shops")
@@ -179,6 +187,8 @@ model User {
   shifts                 Shift[]
   stockReports           StockReport[]
   heldCarts              HeldCart[]
+  discountRequestsMade   DiscountApprovalRequest[] @relation("DiscountRequestRequester")
+  discountRequestsApproved DiscountApprovalRequest[] @relation("DiscountRequestApprover")
 
   @@index([shopId, active])
   @@map("users")
@@ -506,6 +516,7 @@ model Sale {
   payments       Payment[]
   refunds        Refund[]
   exchangedRefunds Refund[] @relation("RefundExchangeSale")
+  discountApprovalRequest DiscountApprovalRequest?
 
   @@index([shopId, createdAt])
   @@index([shopId, sellerId, createdAt])
@@ -656,6 +667,30 @@ model HeldCart {
 
   @@index([shopId, sellerId, createdAt])
   @@map("held_carts")
+}
+
+model DiscountApprovalRequest {
+  id            String                 @id @default(uuid()) @db.Uuid
+  shopId        String                 @db.Uuid @map("shop_id")
+  requesterId   String                 @db.Uuid @map("requester_id")
+  approverId    String?                @db.Uuid @map("approver_id")
+  saleId        String?                @unique @db.Uuid @map("sale_id")
+  status        DiscountApprovalStatus @default(requested)
+  cartItemsJson Json                   @map("cart_items_json")
+  discountCents Int                   @map("discount_cents")
+  reason        String
+  expiresAt     DateTime               @map("expires_at")
+  approvedAt    DateTime?              @map("approved_at")
+  usedAt        DateTime?              @map("used_at")
+  createdAt     DateTime               @default(now()) @map("created_at")
+  shop          Shop                   @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  requester     User                   @relation("DiscountRequestRequester", fields: [requesterId], references: [id])
+  approver      User?                  @relation("DiscountRequestApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  sale          Sale?                  @relation(fields: [saleId], references: [id], onDelete: SetNull)
+
+  @@index([shopId, status, createdAt])
+  @@index([shopId, requesterId, createdAt])
+  @@map("discount_approval_requests")
 }
 
 model ReceiptCounter {

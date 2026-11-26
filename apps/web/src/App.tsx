@@ -16,6 +16,7 @@ type AppUser = {
   role: "admin" | "staff";
   permissions: string[];
   mustChangePassword: boolean;
+  hasPin: boolean;
   discountLimitPct: number;
   active?: boolean;
 };
@@ -26,6 +27,7 @@ type Variant = {
   barcode: string | null;
   attributes: Record<string, unknown>;
   priceCents: number;
+  costCents?: number;
   stock: number;
   mlRemaining: number | null;
   isBulk: boolean;
@@ -307,15 +309,115 @@ function FormError({ value }: { value: unknown }) {
   return value instanceof Error ? <Notice tone="error">{value.message}</Notice> : null;
 }
 
+function ProductImageField({
+  productName,
+  value,
+  onChange,
+}: {
+  productName: string;
+  value: string;
+  onChange: (nextValue: string) => void;
+}) {
+  const uploadInput = useRef<HTMLInputElement>(null);
+  const cameraInput = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState("");
+  const [preparing, setPreparing] = useState(false);
+
+  function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    setPreparing(true);
+    setError("");
+    void encodeProductImage(file)
+      .then(onChange)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not process photo."))
+      .finally(() => setPreparing(false));
+  }
+
+  const currentUrl = value.trim();
+  const previewUrl = currentUrl ? resolveCatalogImage(currentUrl) : "";
+  return (
+    <>
+      <Field label="Product photo URL" hint="Paste an image URL, or upload a photo from this device.">
+        <input
+          autoComplete="off"
+          inputMode="url"
+          placeholder="https://example.com/product.jpg"
+          type="text"
+          value={currentUrl.startsWith("data:") || currentUrl.startsWith("/api/") ? "" : value}
+          onChange={(event) => {
+            onChange(event.target.value);
+            setError("");
+          }}
+        />
+      </Field>
+      <div className="catalog-photo-controls">
+        <span>Add a product photo</span>
+        <div className="action-row">
+          <button
+            type="button"
+            className="button button-secondary"
+            disabled={preparing}
+            onClick={() => uploadInput.current?.click()}
+          >
+            {preparing ? "Preparing photo…" : "Upload photo"}
+          </button>
+          <button
+            type="button"
+            className="button button-secondary"
+            disabled={preparing}
+            onClick={() => cameraInput.current?.click()}
+          >
+            Take photo
+          </button>
+        </div>
+        <input
+          ref={uploadInput}
+          className="photo-file-input"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          aria-label="Upload product photo"
+          onChange={handleFile}
+        />
+        <input
+          ref={cameraInput}
+          className="photo-file-input"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          capture="environment"
+          aria-label="Take product photo with camera"
+          onChange={handleFile}
+        />
+        {error && <p className="field-hint" role="status">{error}</p>}
+        {previewUrl && (
+          <div className="catalog-image-preview">
+            <span>Photo preview</span>
+            <ProgressiveImage
+              className="product-photo-preview"
+              src={previewUrl}
+              alt={`${productName || "Product"} preview`}
+              width={240}
+              height={240}
+              {...(currentUrl.startsWith("/api/") ? { crossOrigin: "use-credentials" as const } : {})}
+            />
+            <button type="button" className="text-button" onClick={() => onChange("")}>Remove photo</button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: AppUser) => void }) {
   const [role, setRole] = useState<"admin" | "staff">("admin");
   const [identifier, setIdentifier] = useState("");
-  const [password, setPassword] = useState("");
+  const [pin, setPin] = useState("");
   const mutation = useMutation({
     mutationFn: () =>
       api<{ user: AppUser }>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ identifier, password, role }),
+        body: JSON.stringify({ identifier, pin, role }),
       }),
     onSuccess: ({ user }) => onLogin(user),
   });
@@ -359,7 +461,7 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
             {role === "admin" ? "Manage inventory, reports and staff." : "Open the till and process sales."}
           </p>
         </header>
-        <form onSubmit={submit} className="stack-form" inert={mutation.isPending || undefined}>
+        <form onSubmit={submit} className="stack-form" autoComplete="off" inert={mutation.isPending || undefined}>
           <p id="login-role-label" className="login-field-label">Sign in as</p>
           <div className="role-selector" role="radiogroup" aria-labelledby="login-role-label" onKeyDown={onRoleKeyDown}>
             <button
@@ -383,23 +485,27 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
               <span>Cashier</span>
             </button>
           </div>
-          <Field label="Username or email">
+          <Field label="Username">
             <input
-              autoComplete="username"
+              autoComplete="off"
+              name="username"
               autoFocus
-              placeholder="Username or email"
+              placeholder="Enter your username"
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               required
             />
           </Field>
-          <Field label="Password">
+          <Field label="PIN" hint="Use your temporary password once if you have not set a PIN yet.">
             <input
               type="password"
-              autoComplete="current-password"
-              placeholder="Enter your password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              name="pin"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              placeholder="Enter your 4–6 digit PIN"
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
               required
             />
           </Field>
@@ -414,14 +520,15 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
   );
 }
 
-function PasswordChange({ brand, onDone }: { brand: BrandSettings; onDone: () => void }) {
+function PasswordChange({ brand, hasPin, onDone }: { brand: BrandSettings; hasPin: boolean; onDone: () => void }) {
   const [currentPassword, setCurrent] = useState("");
   const [newPassword, setNext] = useState("");
+  const [pin, setPin] = useState("");
   const mutation = useMutation({
     mutationFn: () =>
       api("/auth/change-password", {
         method: "POST",
-        body: JSON.stringify({ ...(currentPassword ? { currentPassword } : {}), newPassword }),
+        body: JSON.stringify({ ...(currentPassword ? { currentPassword } : {}), newPassword, ...(!hasPin ? { pin } : {}) }),
       }),
     onSuccess: onDone,
   });
@@ -462,16 +569,67 @@ function PasswordChange({ brand, onDone }: { brand: BrandSettings; onDone: () =>
           <Field label="New password">
             <input
               type="password"
+              autoComplete="new-password"
               minLength={12}
               value={newPassword}
               onChange={(e) => setNext(e.target.value)}
               required
             />
           </Field>
+          {!hasPin && (
+            <Field label="Create your PIN" hint="Use 4 to 6 digits. You will use it with your username to sign in.">
+              <input
+                type="password"
+                name="pin"
+                autoComplete="new-password"
+                inputMode="numeric"
+                pattern="[0-9]{4,6}"
+                minLength={4}
+                maxLength={6}
+                value={pin}
+                onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))}
+                required
+              />
+            </Field>
+          )}
           <FormError value={mutation.error} />
           <Button className="button-full" loading={mutation.isPending}>
             Save password
           </Button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function PinSetup({ brand, onDone }: { brand: BrandSettings; onDone: () => void }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [pin, setPin] = useState("");
+  const mutation = useMutation({
+    mutationFn: () => api("/auth/pin", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, pin }),
+    }),
+    onSuccess: onDone,
+  });
+  return (
+    <main className="login-page">
+      <section className="login-brand-panel" aria-label="Eminent Jay branding">
+        <img className="login-logo" src={brand.logoUrl || "/logo.png"} alt={`${brand.brandName} logo`} width={1600} height={600} />
+        <div className="login-brand-copy"><span className="gold-rule" aria-hidden="true" /><p>Sales, stock and customer care in one place.</p></div>
+      </section>
+      <section className="login-card">
+        <h1>Set your sign-in PIN</h1>
+        <p className="muted">Your account needs a PIN before you can continue. Choose 4 to 6 digits.</p>
+        <form className="stack-form" autoComplete="off" inert={mutation.isPending || undefined} onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
+          <Field label="Current password">
+            <input type="password" autoComplete="new-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required />
+          </Field>
+          <Field label="New PIN">
+            <input type="password" name="pin" autoComplete="new-password" inputMode="numeric" pattern="[0-9]{4,6}" minLength={4} maxLength={6} value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))} required />
+          </Field>
+          <FormError value={mutation.error} />
+          <Button className="button-full" loading={mutation.isPending}>Save PIN and continue</Button>
         </form>
       </section>
     </main>
@@ -511,6 +669,7 @@ function PageNotFound() {
 
 function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => void }) {
   const user = useUser();
+  const pathname = useLocation().pathname;
   const queryClient = useQueryClient();
   const [mobileMenu, setMobileMenu] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -542,8 +701,6 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
     items: section.items.filter((item) => user.permissions.includes(item.permission)),
   })).filter((section) => section.items.length > 0);
   const navItems = visibleSections.flatMap((section) => section.items);
-  const desktopItems = navItems.slice(0, user.role === "admin" ? 6 : 5);
-  const desktopMoreItems = navItems.slice(desktopItems.length);
   const mobileItems = navItems.slice(0, 4);
   const mobileMoreItems = navItems.slice(mobileItems.length);
   function prefetchRoute(path: string) {
@@ -581,8 +738,27 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
   }
   return (
     <div className="app-shell">
+      <aside className={`sidebar ${mobileMenu ? "sidebar-open" : ""}`}>
+        <Link to="/" className="brand-lockup sidebar-brand" onClick={() => setMobileMenu(false)}>
+          {brand.logoUrl ? <img className="brand-logo" src={brand.logoUrl} alt="" /> : <span className="brand-monogram" aria-hidden="true"><Icon name="cart" /></span>}
+          <span>
+            <b>{brand.brandName}</b>
+            <small>{user.role === "admin" ? "OWNER DASHBOARD" : "RETAIL POS"}</small>
+          </span>
+        </Link>
+        <nav className="sidebar-nav" aria-label="Main navigation">
+          {visibleSections.map((section) => (
+            <section className="nav-group" key={section.label}>
+              <p className="nav-section-label">{section.label}</p>
+              {section.items.map(navLink)}
+            </section>
+          ))}
+        </nav>
+      </aside>
+      {mobileMenu && <button className="mobile-backdrop" aria-label="Close navigation" onClick={() => setMobileMenu(false)} />}
+      <div className="app-main">
         <header className="topbar app-header">
-          <Link to="/" className="brand-lockup" onClick={() => setMobileMenu(false)}>
+          <Link to="/" className="brand-lockup app-header-brand" onClick={() => setMobileMenu(false)}>
             {brand.logoUrl ? <img className="brand-logo" src={brand.logoUrl} alt="" /> : <span className="brand-monogram" aria-hidden="true"><Icon name="cart" /></span>}
             <span>
               <b>{brand.brandName}</b>
@@ -598,18 +774,7 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
             <Icon name={mobileMenu ? "x" : "menu"} />
             <span>Menu</span>
           </button>
-          <nav className={`main-nav ${mobileMenu ? "nav-open" : ""}`} aria-label="Main navigation">
-            {(mobileMenu ? navItems : desktopItems).map((item) => navLink(item))}
-            {!mobileMenu && desktopMoreItems.length > 0 && (
-              <div className="more-nav-wrap">
-                <button className={`nav-link more-nav-trigger ${moreMenuOpen ? "nav-active" : ""}`} aria-expanded={moreMenuOpen} onClick={() => setMoreMenuOpen((open) => !open)}>
-                  <Icon name="menu" className="nav-glyph" />
-                  <span>More</span>
-                </button>
-                {moreMenuOpen && <div className="more-nav-popover">{desktopMoreItems.map((item) => navLink(item))}</div>}
-              </div>
-            )}
-          </nav>
+          <div className="topbar-title">{navItems.find((item) => item.to === pathname)?.label ?? brand.brandName}</div>
           <div className="topbar-right">
             <span className={`connectivity-indicator ${online ? "" : "connectivity-offline"}`} role="status" aria-label={online ? "Online" : "Offline"}>
               <Icon name={online ? "wifi" : "wifi-off"} />
@@ -628,9 +793,7 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
             </div>
           </div>
         </header>
-        {mobileMenu && <button className="mobile-backdrop" aria-label="Close navigation" onClick={() => setMobileMenu(false)} />}
-        <div className="app-main">
-          <main className="content">
+        <main className="content">
           <RouteProgress />
           <Routes>
             <Route path="/" element={<POSPage />} />
@@ -681,8 +844,8 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
             />
             <Route path="*" element={<PageNotFound />} />
           </Routes>
-          </main>
-        </div>
+        </main>
+      </div>
       <nav className="mobile-tabbar" aria-label="Quick navigation">
         {mobileItems.map((item) => (
           <NavLink key={item.to} to={item.to} end={item.to === "/"} aria-label={item.label} onClick={() => setMoreMenuOpen(false)}>
@@ -693,7 +856,7 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
         {mobileMoreItems.length > 0 && (
           <div className="mobile-more-wrap">
             <button className={moreMenuOpen ? "nav-active" : ""} aria-expanded={moreMenuOpen} onClick={() => setMoreMenuOpen((open) => !open)}><Icon name="menu" /><span>More</span></button>
-            {moreMenuOpen && <div className="mobile-more-popover">{mobileMoreItems.map((item) => navLink(item))}</div>}
+            {moreMenuOpen && <div className="mobile-more-popover">{mobileMoreItems.map(navLink)}</div>}
           </div>
         )}
       </nav>
@@ -719,6 +882,7 @@ function RoleGate({ permission, children }: { permission: string; children: Reac
 
 function POSPage() {
   const navigate = useNavigate();
+  const user = useUser();
   const queryClient = useQueryClient();
   const {
     data: catalog,
@@ -753,6 +917,15 @@ function POSPage() {
   const [holdError, setHoldError] = useState("");
   const [holdPending, setHoldPending] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [discountAmount, setDiscountAmount] = useState("");
+  const [discountReason, setDiscountReason] = useState("");
+  const [managerUsername, setManagerUsername] = useState("");
+  const [managerPin, setManagerPin] = useState("");
+  const [discountApproval, setDiscountApproval] = useState<{
+    id: string;
+    status: "requested" | "approved";
+    approvedBy?: string;
+  } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
@@ -784,12 +957,22 @@ function POSPage() {
   );
   const showTillSkeleton = useDelayedLoading(isPending || shiftPending);
   const subtotal = cart.reduce((sum, line) => sum + line.variant.priceCents * line.quantity, 0);
+  const requestedDiscountCents = Math.max(0, cents(discountAmount));
+  const discountCents = Math.min(subtotal, requestedDiscountCents);
+  const discountedSubtotal = Math.max(0, subtotal - discountCents);
   const taxSettings = catalog?.taxSettings;
   const taxRateBps = taxSettings?.enabled ? Math.max(0, Math.min(10000, taxSettings.rateBps)) : 0;
   const taxCents = taxRateBps
-    ? Math.round((subtotal * taxRateBps) / (taxSettings?.inclusive ? 10000 + taxRateBps : 10000))
+    ? Math.round((discountedSubtotal * taxRateBps) / (taxSettings?.inclusive ? 10000 + taxRateBps : 10000))
     : 0;
-  const total = subtotal + (taxSettings?.inclusive ? 0 : taxCents);
+  const total = discountedSubtotal + (taxSettings?.inclusive ? 0 : taxCents);
+  const discountOverLimit =
+    subtotal > 0 && discountCents * 100 > subtotal * (user.role === "admin" ? 100 : user.discountLimitPct);
+  const discountApproved = discountApproval?.status === "approved";
+  const discountCanBePaid =
+    requestedDiscountCents < subtotal &&
+    (!discountCents || !!discountReason.trim()) &&
+    (!discountOverLimit || discountApproved);
   const invoiceDetailsStarted = Boolean(
     invoiceBuyerName.trim() || invoiceBuyerPhone.trim() || invoiceBuyerEmail.trim(),
   );
@@ -840,6 +1023,9 @@ function POSPage() {
         body: JSON.stringify({
           clientUuid: crypto.randomUUID(),
           items: cart.map(({ variant, quantity }) => ({ variantId: variant.id, quantity })),
+          cartDiscountCents: discountCents,
+          ...(discountCents ? { discountReason: discountReason.trim() } : {}),
+          ...(discountApproved && discountApproval ? { discountApprovalRequestId: discountApproval.id } : {}),
           ...(invoiceDetailsValid && invoiceBuyerName.trim() && invoiceBuyerPhone.trim()
             ? {
                 customerDetails: {
@@ -875,6 +1061,36 @@ function POSPage() {
       refresh();
     },
   });
+  const discountRequestMutation = useMutation({
+    mutationFn: () => api<{ request: { id: string; status: "requested" } }>("/sales/discount-requests", {
+      method: "POST",
+      body: JSON.stringify({
+        items: cart.map(({ variant, quantity }) => ({ variantId: variant.id, quantity })),
+        discountCents,
+        reason: discountReason.trim(),
+      }),
+    }),
+    onSuccess: ({ request }) => setDiscountApproval({ id: request.id, status: "requested" }),
+  });
+  const approveDiscountMutation = useMutation({
+    mutationFn: () => {
+      if (!discountApproval) throw new Error("Request a discount before approving it.");
+      return api<{ request: { id: string; status: "approved"; approvedBy: string } }>(
+        `/sales/discount-requests/${discountApproval.id}/approve`,
+        { method: "POST", body: JSON.stringify({ username: managerUsername.trim(), pin: managerPin }) },
+      );
+    },
+    onSuccess: ({ request }) => {
+      setDiscountApproval({ id: request.id, status: "approved", approvedBy: request.approvedBy });
+      setManagerPin("");
+    },
+  });
+  useEffect(() => {
+    setDiscountAmount("");
+    setDiscountReason("");
+    setDiscountApproval(null);
+    setManagerPin("");
+  }, [cart]);
   const mockComplete = useMutation({
     mutationFn: () =>
       api(`/payments/${activePaymentId}/mock-complete`, { method: "POST", body: "{}" }),
@@ -1126,6 +1342,7 @@ function POSPage() {
               <span>Subtotal</span>
               <b>{money(subtotal)}</b>
             </div>
+            {discountCents > 0 && <div><span>Discount</span><b>−{money(discountCents)}</b></div>}
             {taxCents > 0 && <div><span>VAT</span><b>{money(taxCents)}</b></div>}
             <div className="grand-total">
               <span>Total due</span>
@@ -1252,7 +1469,7 @@ function POSPage() {
       {payOpen && (
         <div className="modal-backdrop" role="presentation">
           <section
-            className="modal-card"
+            className="modal-card payment-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="pay-title"
@@ -1365,6 +1582,111 @@ function POSPage() {
                 <p className="muted">
                   Amount due <b>{money(total)}</b>
                 </p>
+                <section className="payment-discount-panel" aria-label="Cart discount">
+                  <Field label="Cart discount (KES)" hint={`Your personal discount limit is ${user.role === "admin" ? 100 : user.discountLimitPct}%.`}>
+                    <input
+                      type="number"
+                      min="0"
+                      max={currencyInput(subtotal)}
+                      step="0.01"
+                      inputMode="decimal"
+                      value={discountAmount}
+                      onChange={(event) => {
+                        setDiscountAmount(event.target.value);
+                        setDiscountApproval(null);
+                        setManagerPin("");
+                        discountRequestMutation.reset();
+                        approveDiscountMutation.reset();
+                      }}
+                    />
+                  </Field>
+                  {requestedDiscountCents >= subtotal && requestedDiscountCents > 0 && (
+                    <p className="field-hint" role="alert">Discount must leave at least KES 0.01 to pay.</p>
+                  )}
+                  {discountCents > 0 && (
+                    <Field label="Discount reason">
+                      <textarea
+                        rows={2}
+                        maxLength={500}
+                        value={discountReason}
+                        onChange={(event) => {
+                          setDiscountReason(event.target.value);
+                          setDiscountApproval(null);
+                          setManagerPin("");
+                          discountRequestMutation.reset();
+                          approveDiscountMutation.reset();
+                        }}
+                        placeholder="Why is this discount being applied?"
+                        required
+                      />
+                    </Field>
+                  )}
+                  {discountOverLimit && !discountApproved && (
+                    <div className="discount-approval-box">
+                      <p className="field-hint">This discount is above your limit. An administrator must approve it before payment.</p>
+                      {!discountApproval && (
+                        <Button
+                          className="button-secondary"
+                          loading={discountRequestMutation.isPending}
+                          disabled={requestedDiscountCents >= subtotal || !discountReason.trim()}
+                          onClick={() => discountRequestMutation.mutate()}
+                        >
+                          Request manager approval
+                        </Button>
+                      )}
+                      {discountApproval?.status === "requested" && (
+                        <div className="stack-form discount-manager-fields">
+                          <Notice>Have an administrator approve this request with their username and PIN.</Notice>
+                          <Field label="Administrator username">
+                            <input
+                              autoComplete="off"
+                              value={managerUsername}
+                              onChange={(event) => setManagerUsername(event.target.value)}
+                              required
+                            />
+                          </Field>
+                          <Field label="Administrator PIN">
+                            <input
+                              type="password"
+                              name="discount-approval-pin"
+                              autoComplete="new-password"
+                              inputMode="numeric"
+                              maxLength={6}
+                              value={managerPin}
+                              onChange={(event) => setManagerPin(event.target.value.replace(/\D/g, ""))}
+                              required
+                            />
+                          </Field>
+                          <div className="action-row">
+                            <Button
+                              loading={approveDiscountMutation.isPending}
+                              disabled={managerUsername.trim().length < 3 || !/^\d{4,6}$/.test(managerPin)}
+                              onClick={() => approveDiscountMutation.mutate()}
+                            >
+                              Approve discount
+                            </Button>
+                            <button
+                              type="button"
+                              className="text-button"
+                              onClick={() => {
+                                setDiscountApproval(null);
+                                discountRequestMutation.reset();
+                                approveDiscountMutation.reset();
+                              }}
+                            >
+                              Request again
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      <FormError value={discountRequestMutation.error} />
+                      <FormError value={approveDiscountMutation.error} />
+                    </div>
+                  )}
+                  {discountApproved && (
+                    <Notice tone="success">Approved by {discountApproval?.approvedBy}. This approval is for the current cart.</Notice>
+                  )}
+                </section>
                 <details className="invoice-details">
                   <summary>
                     Invoice details <span>Optional</span>
@@ -1473,10 +1795,11 @@ function POSPage() {
                     </Notice>
                   )}
                 <FormError value={saleMutation.error} />
-          <Button
+                <Button
                   className="button-full button-lg"
-            loading={saleMutation.isPending}
+                  loading={saleMutation.isPending}
                   disabled={
+                    !discountCanBePaid ||
                     (method === "cash" && cents(tender) < total) ||
                     !invoiceDetailsValid ||
                     (method === "mpesa_stk" && !phone.trim()) ||
@@ -1588,24 +1911,37 @@ async function downloadOwnerReport() {
 async function encodeProductImage(file: File) {
   if (!file.type.startsWith("image/")) throw new Error("Choose an image file.");
   if (file.size > 12 * 1024 * 1024) throw new Error("Choose a photo smaller than 12 MB.");
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 600 / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-  const context = canvas.getContext("2d");
-  if (!context) {
-    bitmap.close();
-    throw new Error("Photo editing is not supported in this browser.");
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new Error("This image format is not supported. Choose a JPG, PNG, or WebP photo.");
   }
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  const compressed = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob(resolve, "image/webp", 0.78),
-  );
-  if (!compressed) throw new Error("Could not prepare this photo.");
-  if (compressed.size > 200_000)
-    throw new Error("This photo is still too large. Choose a smaller image.");
+  let compressed: Blob | null = null;
+  try {
+    for (const longestSide of [720, 600, 480, 360, 280, 200]) {
+      const scale = Math.min(1, longestSide / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Photo editing is not supported in this browser.");
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      for (const quality of [0.82, 0.7, 0.58, 0.46, 0.34]) {
+        const candidate = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob(resolve, "image/webp", quality),
+        );
+        if (candidate && candidate.size <= 200_000) {
+          compressed = candidate;
+          break;
+        }
+      }
+      if (compressed) break;
+    }
+  } finally {
+    bitmap.close();
+  }
+  if (!compressed) throw new Error("This photo could not be compressed enough. Choose another image.");
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("Could not read this photo."));
@@ -1707,7 +2043,7 @@ function ShiftPage() {
               e.preventDefault();
               mutation.mutate({ path: "/shifts/open", data: { openingCashCents: cents(amount) } });
             }}
-          >
+                >
             <Field label="Opening float (KES)">
               <input
                 type="number"
@@ -3274,6 +3610,7 @@ function StaffAdminPage() {
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [pin, setPin] = useState("");
   const [discount, setDiscount] = useState("0");
   const [message, setMessage] = useState("");
   const setStatus = useMutation({
@@ -3289,6 +3626,7 @@ function StaffAdminPage() {
           name,
           username,
           temporaryPassword: password,
+          pin,
           discountLimitPct: Number(discount),
         }),
       }),
@@ -3296,6 +3634,7 @@ function StaffAdminPage() {
       setName("");
       setUsername("");
       setPassword("");
+      setPin("");
       setMessage("Staff account created.");
       void client.invalidateQueries({ queryKey: ["staff"] });
     },
@@ -3336,6 +3675,20 @@ function StaffAdminPage() {
                 minLength={12}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </Field>
+            <Field label="Sign-in PIN" hint="Staff will use this PIN with their username to sign in.">
+              <input
+                type="password"
+                name="staff-pin"
+                autoComplete="new-password"
+                inputMode="numeric"
+                pattern="[0-9]{4,6}"
+                minLength={4}
+                maxLength={6}
+                value={pin}
+                onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))}
                 required
               />
             </Field>
@@ -3527,26 +3880,69 @@ function CatalogAdminPage() {
   const client = useQueryClient();
   const [departmentId, setDepartmentId] = useState("");
   const [productTypeId, setProductTypeId] = useState("");
-  const [brandId, setBrandId] = useState("");
+  const [brandName, setBrandName] = useState("");
   const [name, setName] = useState("");
   const [imageUrl, setImageUrl] = useState("");
-  const [imageError, setImageError] = useState("");
-  const imageFileInput = useRef<HTMLInputElement>(null);
-  const cameraFileInput = useRef<HTMLInputElement>(null);
   const [sku, setSku] = useState("");
   const [price, setPrice] = useState("");
   const [cost, setCost] = useState("");
   const [stock, setStock] = useState("0");
   const [attrs, setAttrs] = useState("{}");
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editBrandName, setEditBrandName] = useState("");
+  const [editImageUrl, setEditImageUrl] = useState("");
+  const [editVariantId, setEditVariantId] = useState("");
+  const [editSku, setEditSku] = useState("");
+  const [editPrice, setEditPrice] = useState("");
+  const [editCost, setEditCost] = useState("");
+  const [editAttributes, setEditAttributes] = useState("{}");
   const [message, setMessage] = useState("");
+
+  async function resolveBrandId(value: string) {
+    const normalized = value.trim();
+    if (!normalized) return null;
+    const existing = (data?.brands ?? []).find((row) => row.name.toLowerCase() === normalized.toLowerCase());
+    if (existing) return existing.id;
+    const created = await api<{ id: string }>("/catalog/brands", {
+      method: "POST",
+      body: JSON.stringify({ name: normalized }),
+    });
+    return created.id;
+  }
+
+  function startEditing(product: Product) {
+    const variant = product.variants[0];
+    setEditingProduct(product);
+    setEditName(product.name);
+    setEditBrandName(product.brand?.name ?? "");
+    setEditImageUrl(product.imageUrl ?? "");
+    setEditVariantId(variant?.id ?? "");
+    setEditSku(variant?.sku ?? "");
+    setEditPrice(variant ? currencyInput(variant.priceCents) : "");
+    setEditCost(variant ? currencyInput(variant.costCents ?? 0) : "");
+    setEditAttributes(JSON.stringify(variant?.attributes ?? {}, null, 2));
+  }
+
+  function selectEditingVariant(variantId: string) {
+    const variant = editingProduct?.variants.find((row) => row.id === variantId);
+    if (!variant) return;
+    setEditVariantId(variant.id);
+    setEditSku(variant.sku);
+    setEditPrice(currencyInput(variant.priceCents));
+    setEditCost(currencyInput(variant.costCents ?? 0));
+    setEditAttributes(JSON.stringify(variant.attributes ?? {}, null, 2));
+  }
+
   const create = useMutation({
     mutationFn: async () => {
+      const resolvedBrandId = await resolveBrandId(brandName);
       await api("/catalog/products", {
         method: "POST",
         body: JSON.stringify({
           departmentId,
           productTypeId,
-          brandId: brandId || null,
+          brandId: resolvedBrandId,
           name,
           imageUrl: imageUrl.trim() || null,
           attributes: {},
@@ -3588,8 +3984,8 @@ function CatalogAdminPage() {
     onSuccess: () => {
       setMessage("Product and opening stock created.");
       setName("");
+      setBrandName("");
       setImageUrl("");
-      setImageError("");
       setSku("");
       setPrice("");
       setCost("");
@@ -3598,16 +3994,57 @@ function CatalogAdminPage() {
       void client.invalidateQueries({ queryKey: ["stock"] });
     },
   });
+
+  const updateProduct = useMutation({
+    mutationFn: async () => {
+      if (!editingProduct) throw new Error("Choose a product to edit.");
+      const resolvedBrandId = await resolveBrandId(editBrandName);
+      const productUpdate: Record<string, unknown> = {
+        name: editName.trim(),
+        brandId: resolvedBrandId,
+        ...(editImageUrl !== (editingProduct.imageUrl ?? "")
+          ? { imageUrl: editImageUrl.trim() || null }
+          : {}),
+      };
+      await api(`/catalog/products/${editingProduct.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(productUpdate),
+      });
+      const variant = editingProduct.variants.find((row) => row.id === editVariantId);
+      if (variant) {
+        const attributes: unknown = JSON.parse(editAttributes);
+        if (!attributes || typeof attributes !== "object" || Array.isArray(attributes))
+          throw new Error("Variant attributes must be a JSON object.");
+        await api(`/catalog/variants/${variant.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            sku: editSku.trim(),
+            priceCents: cents(editPrice),
+            costCents: cents(editCost),
+            attributes,
+          }),
+        });
+      }
+    },
+    onSuccess: () => {
+      setMessage("Product details updated.");
+      setEditingProduct(null);
+      void client.invalidateQueries({ queryKey: ["catalog"] });
+      void client.invalidateQueries({ queryKey: ["stock"] });
+    },
+  });
+
   if (isPending) return showLoading ? <FormSkeleton /> : <div className="loading-reserve" aria-hidden="true" />;
   return (
     <>
       <PageHeader
         eyebrow="ADMINISTRATION"
         title="Catalog"
-        detail="Add a product with one sellable variant and opening stock."
+        detail="Add products, update their details, and record opening stock."
       />
       {message && <Notice tone="success">{message}</Notice>}
       <FormError value={create.error} />
+      <FormError value={updateProduct.error} />
       <section className="surface form-surface">
         <form
           className="catalog-form"
@@ -3620,75 +4057,7 @@ function CatalogAdminPage() {
           <Field label="Product name">
             <input value={name} onChange={(e) => setName(e.target.value)} required />
           </Field>
-          <Field label="Product picture URL" hint="Use a direct link to a publicly accessible product photo.">
-            <input
-              autoComplete="url"
-              inputMode="url"
-              placeholder="https://example.com/product.jpg"
-              type="url"
-              value={imageUrl.startsWith("data:") ? "" : imageUrl}
-              onChange={(e) => {
-                setImageUrl(e.target.value);
-                setImageError("");
-              }}
-            />
-          </Field>
-          <div className="catalog-photo-controls">
-            <span>Add a product photo</span>
-            <div className="action-row">
-              <button type="button" className="button button-secondary" onClick={() => imageFileInput.current?.click()}>
-                Upload photo
-              </button>
-              <button type="button" className="button button-secondary" onClick={() => cameraFileInput.current?.click()}>
-                Take photo
-              </button>
-            </div>
-            <input
-              ref={imageFileInput}
-              className="photo-file-input"
-              type="file"
-              accept="image/*"
-              aria-label="Upload product photo"
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
-                event.currentTarget.value = "";
-                if (!file) return;
-                void encodeProductImage(file).then(setImageUrl).catch((error) => {
-                  setImageError(error instanceof Error ? error.message : "Could not process photo");
-                });
-              }}
-            />
-            <input
-              ref={cameraFileInput}
-              className="photo-file-input"
-              type="file"
-              accept="image/*"
-              capture="environment"
-              aria-label="Take product photo with camera"
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
-                event.currentTarget.value = "";
-                if (!file) return;
-                void encodeProductImage(file).then(setImageUrl).catch((error) => {
-                  setImageError(error instanceof Error ? error.message : "Could not process photo");
-                });
-              }}
-            />
-            {imageError && <p className="field-hint">{imageError}</p>}
-            {imageUrl && (
-              <div className="catalog-image-preview">
-                <span>Photo preview</span>
-                <ProgressiveImage
-                  className="product-photo-preview"
-                  src={imageUrl}
-                  alt={`${name || "Product"} preview`}
-                  width={240}
-                  height={240}
-                />
-                <button type="button" className="text-button" onClick={() => setImageUrl("")}>Remove photo</button>
-              </div>
-            )}
-          </div>
+          <ProductImageField productName={name} value={imageUrl} onChange={setImageUrl} />
           <Field label="SKU">
             <input value={sku} onChange={(e) => setSku(e.target.value)} required />
           </Field>
@@ -3716,15 +4085,14 @@ function CatalogAdminPage() {
               ))}
             </select>
           </Field>
-          <Field label="Brand">
-            <select value={brandId} onChange={(e) => setBrandId(e.target.value)}>
-              <option value="">No brand</option>
-              {data?.brands.map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
-            </select>
+          <Field label="Brand name" hint="Type a brand name. Existing names appear as suggestions.">
+            <input
+              autoComplete="off"
+              list="catalog-brand-suggestions"
+              value={brandName}
+              onChange={(event) => setBrandName(event.target.value)}
+              placeholder="e.g. Chanel"
+            />
           </Field>
           <Field label="Selling price (KES)">
             <input
@@ -3766,19 +4134,87 @@ function CatalogAdminPage() {
           </div>
         </form>
       </section>
+      <datalist id="catalog-brand-suggestions">
+        {(data?.brands ?? []).map((row) => <option key={row.id} value={row.name} />)}
+      </datalist>
       <section className="surface table-surface section-spaced">
         <h2>Products</h2>
         <DataTable
-          headers={["Product", "Department", "Type", "Variants"]}
+          headers={["Product", "Brand", "Department", "Type", "Variants", "Action"]}
           rows={(data?.products ?? []).map((product) => [
             product.name,
+            product.brand?.name ?? "—",
             product.department.name,
             product.productType.name,
             product.variants.length,
+            <button type="button" className="button button-secondary" onClick={() => startEditing(product)}>Edit</button>,
           ])}
           empty="No products in the catalog."
         />
       </section>
+      {editingProduct && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-card catalog-edit-modal" role="dialog" aria-modal="true" aria-labelledby="catalog-edit-title">
+            <button type="button" className="modal-close" aria-label="Close" onClick={() => setEditingProduct(null)}>
+              <Icon name="x" />
+            </button>
+            <p className="eyebrow">CATALOG</p>
+            <h2 id="catalog-edit-title">Edit product</h2>
+            <form
+              className="stack-form catalog-edit-form"
+              inert={updateProduct.isPending || undefined}
+              onSubmit={(event) => {
+                event.preventDefault();
+                updateProduct.mutate();
+              }}
+            >
+              <Field label="Product name">
+                <input value={editName} onChange={(event) => setEditName(event.target.value)} required />
+              </Field>
+              <Field label="Brand name" hint="Type a name or choose a suggestion.">
+                <input
+                  autoComplete="off"
+                  list="catalog-brand-suggestions"
+                  value={editBrandName}
+                  onChange={(event) => setEditBrandName(event.target.value)}
+                  placeholder="e.g. Chanel"
+                />
+              </Field>
+              <ProductImageField productName={editName} value={editImageUrl} onChange={setEditImageUrl} />
+              {editingProduct.variants.length > 0 ? (
+                <>
+                  <Field label="Variant to edit">
+                    <select value={editVariantId} onChange={(event) => selectEditingVariant(event.target.value)}>
+                      {editingProduct.variants.map((variant) => (
+                        <option key={variant.id} value={variant.id}>{variant.sku}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="SKU">
+                    <input value={editSku} onChange={(event) => setEditSku(event.target.value)} required />
+                  </Field>
+                  <Field label="Selling price (KES)">
+                    <input type="number" min="0" step="0.01" value={editPrice} onChange={(event) => setEditPrice(event.target.value)} required />
+                  </Field>
+                  <Field label="Cost price (KES)">
+                    <input type="number" min="0" step="0.01" value={editCost} onChange={(event) => setEditCost(event.target.value)} required />
+                  </Field>
+                  <Field label="Variant attributes (JSON)" hint='For example: {"size_ml": 50, "concentration": "EDP"}'>
+                    <textarea rows={3} value={editAttributes} onChange={(event) => setEditAttributes(event.target.value)} required />
+                  </Field>
+                </>
+              ) : (
+                <p className="muted">This product has no sellable variants. You can update its name, brand, and photo.</p>
+              )}
+              <FormError value={updateProduct.error} />
+              <div className="action-row">
+                <button type="button" className="button button-secondary" onClick={() => setEditingProduct(null)}>Cancel</button>
+                <Button loading={updateProduct.isPending}>Save changes</Button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </>
   );
 }
@@ -3891,11 +4327,14 @@ export default function App() {
     return (
       <PasswordChange
         brand={brandSettings}
+        hasPin={user.hasPin}
         onDone={() => {
           void queryClient.invalidateQueries({ queryKey: ["me"] });
         }}
       />
     );
+  if (!user.hasPin)
+    return <PinSetup brand={brandSettings} onDone={() => { void queryClient.invalidateQueries({ queryKey: ["me"] }); }} />;
   async function logout() {
     try {
       await api("/auth/logout", { method: "POST", body: "{}" });

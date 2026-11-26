@@ -45,7 +45,7 @@ describe("POST /api/auth/login role selection", () => {
     mockPrisma.$transaction.mockResolvedValue([]);
   });
 
-  function mockUser(roleName: "admin" | "staff") {
+  function mockUser(roleName: "admin" | "staff", pinHash: string | null = null) {
     mockPrisma.user.findFirst.mockResolvedValue({
       id: `user-${roleName}`,
       shopId: "shop-1",
@@ -53,6 +53,7 @@ describe("POST /api/auth/login role selection", () => {
       username: roleName,
       email: `${roleName}@shop.local`,
       passwordHash,
+      pinHash,
       active: true,
       archivedAt: null,
       mustChangePassword: false,
@@ -66,7 +67,7 @@ describe("POST /api/auth/login role selection", () => {
     mockUser("admin");
     const response = await request(createApp())
       .post("/api/auth/login")
-      .send({ identifier: "admin", password, role: "admin" });
+      .send({ identifier: "admin", pin: password, role: "admin" });
 
     expect(response.status).toBe(200);
     expect(response.body.user.role).toBe("admin");
@@ -77,7 +78,7 @@ describe("POST /api/auth/login role selection", () => {
     mockUser("staff");
     const response = await request(createApp())
       .post("/api/auth/login")
-      .send({ identifier: "staff", password, role: "admin" });
+      .send({ identifier: "staff", pin: password, role: "admin" });
 
     expect(response.status).toBe(403);
     expect(response.body.error).toContain("Cashier");
@@ -89,7 +90,7 @@ describe("POST /api/auth/login role selection", () => {
     mockUser("admin");
     const response = await request(createApp())
       .post("/api/auth/login")
-      .send({ identifier: "admin", password, role: "staff" });
+      .send({ identifier: "admin", pin: password, role: "staff" });
 
     expect(response.status).toBe(403);
     expect(response.body.error).toContain("Admin");
@@ -101,19 +102,29 @@ describe("POST /api/auth/login role selection", () => {
     mockUser("staff");
     const response = await request(createApp())
       .post("/api/auth/login")
-      .send({ identifier: "staff", password: "wrong-password", role: "admin" });
+      .send({ identifier: "staff", pin: "wrong-password", role: "admin" });
 
     expect(response.status).toBe(401);
-    expect(response.body.error).toBe("Invalid username or password");
+    expect(response.body.error).toBe("Invalid username or PIN");
   });
 
   it("remains backwards compatible when role is omitted", async () => {
     mockUser("staff");
     const response = await request(createApp())
       .post("/api/auth/login")
-      .send({ identifier: "staff", password });
+      .send({ identifier: "staff", pin: password });
 
     expect(response.status).toBe(200);
     expect(response.body.user.role).toBe("staff");
+  });
+
+  it("uses the saved PIN when an account has one", async () => {
+    mockUser("staff", await bcrypt.hash("2468", 4));
+    const response = await request(createApp())
+      .post("/api/auth/login")
+      .send({ identifier: "staff", pin: "2468", role: "staff" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.user.hasPin).toBe(true);
   });
 });

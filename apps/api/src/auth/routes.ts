@@ -19,12 +19,13 @@ import { configuredShopId } from "../shop-settings.js";
 const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 const loginInput = z.object({
   identifier: z.string().trim().min(1).max(254),
-  password: z.string().min(1).max(200),
+  pin: z.string().min(1).max(200),
   role: z.enum(["admin", "staff"]).optional(),
 });
 const passwordInput = z.object({
   currentPassword: z.string().min(1).max(200).optional(),
   newPassword: z.string().min(12).max(200),
+  pin: z.string().regex(/^\d{4,6}$/).optional(),
 });
 const createStaffInput = z.object({
   name: z.string().trim().min(1).max(120),
@@ -37,10 +38,7 @@ const createStaffInput = z.object({
   email: z.string().email().max(254).optional(),
   phone: z.string().trim().max(30).optional(),
   temporaryPassword: z.string().min(12).max(200),
-  pin: z
-    .string()
-    .regex(/^\d{4,6}$/)
-    .optional(),
+  pin: z.string().regex(/^\d{4,6}$/),
   discountLimitPct: z.number().int().min(0).max(100).default(0),
 });
 const editStaffInput = z
@@ -72,6 +70,7 @@ function safeUser(user: {
   role: { name: string };
   active?: boolean;
   mustChangePassword: boolean;
+  pinHash: string | null;
   discountLimitPct: number;
   permissionOverridesJson: unknown;
 }) {
@@ -94,6 +93,7 @@ function safeUser(user: {
     role: user.role.name,
     active: user.active ?? true,
     mustChangePassword: user.mustChangePassword,
+    hasPin: Boolean(user.pinHash),
     discountLimitPct: user.discountLimitPct,
     permissions: [...permissions],
     permissionOverrides: user.permissionOverridesJson,
@@ -109,13 +109,12 @@ authRouter.post("/login", async (request, response) => {
     where: {
       OR: [
         { username: { equals: identifier, mode: "insensitive" } },
-        { email: { equals: identifier, mode: "insensitive" } },
       ],
     },
     include: { role: { include: { permissions: { include: { permission: true } } } } },
   });
   const shopId = user?.shopId ?? (await configuredShopId());
-  if (!shopId) return response.status(401).json({ error: "Invalid username or password" });
+  if (!shopId) return response.status(401).json({ error: "Invalid username or PIN" });
   const since = new Date(Date.now() - 15 * 60 * 1000);
   const attempts = await prisma.loginAttempt.count({
     where: businessWhere(shopId, {
@@ -133,7 +132,9 @@ authRouter.post("/login", async (request, response) => {
     !!user &&
     user.active &&
     !user.archivedAt &&
-    (await bcrypt.compare(parsed.data.password, user.passwordHash));
+    (user.pinHash
+      ? /^\d{4,6}$/.test(parsed.data.pin) && (await bcrypt.compare(parsed.data.pin, user.pinHash))
+      : await bcrypt.compare(parsed.data.pin, user.passwordHash));
   await prisma.loginAttempt.create({
     data: businessData(shopId, { identifier, ip: clientIp(request), succeeded: valid }),
   });
@@ -148,7 +149,7 @@ authRouter.post("/login", async (request, response) => {
         afterJson: { identifier },
       }),
     });
-    return response.status(401).json({ error: "Invalid username or password" });
+    return response.status(401).json({ error: "Invalid username or PIN" });
   }
   if (parsed.data.role && user.role.name !== parsed.data.role) {
     await prisma.auditLog.create({
@@ -228,7 +229,7 @@ authRouter.post("/logout", async (request: AuthenticatedRequest, response) => {
 authRouter.post("/change-password", async (request: AuthenticatedRequest, response) => {
   const parsed = passwordInput.safeParse(request.body);
   if (!parsed.success || !request.authUser)
-    return response.status(400).json({ error: "Password must be at least 12 characters" });
+    return response.status(400).json({ error: "Password must be at least 12 characters and PIN must contain 4 to 6 digits" });
   const user = await prisma.user.findFirstOrThrow({
     where: shopWhere(request, { id: request.authUser.id }),
   });
@@ -238,11 +239,17 @@ authRouter.post("/change-password", async (request: AuthenticatedRequest, respon
       !(await bcrypt.compare(parsed.data.currentPassword, user.passwordHash)))
   )
     return response.status(401).json({ error: "Current password is incorrect" });
+  if (!user.pinHash && !parsed.data.pin)
+    return response.status(400).json({ error: "Set a 4 to 6 digit PIN before continuing" });
   const passwordHash = await bcrypt.hash(parsed.data.newPassword, 12);
   await prisma.$transaction([
     prisma.user.update({
       where: shopWhere(request, { id: user.id }),
-      data: { passwordHash, mustChangePassword: false },
+      data: {
+        passwordHash,
+        mustChangePassword: false,
+        ...(parsed.data.pin ? { pinHash: await bcrypt.hash(parsed.data.pin, 12) } : {}),
+      },
     }),
     prisma.authSession.updateMany({
       where: shopWhere(request, {
