@@ -27,6 +27,11 @@ This log records choices for the Phase 1 implementation. `TODO(spec)` marks an u
 - **Hardware and deployment:** target browser printing and keyboard-wedge barcode scanning first, while keeping provider/device boundaries extensible. **TODO(spec):** confirm printer/scanner model, number of tills/admin accounts, hosting preference, and budget.
 - **Audit scope:** audit all important writes, authentication failures, and other actions enumerated in section 6.14; avoid secrets and unnecessary sensitive data in audit payloads. **TODO(spec):** define retention and exact before/after field redaction during implementation.
 
+## 2026-11-26 requested feature extension
+
+- The owner explicitly requested customer profiles, sales analysis, and modern 3D charts. This authorizes those specific additions beyond the earlier M1–M8 boundary. Customer management remains available only to authenticated users with `customers.write`; profit analysis stays admin-only behind `sales.read.all`. No SMS campaigns, loyalty features, purchasing, or other deferred modules are included.
+- Use the existing customer and preference tables. Keep charts as responsive SVG with shaded 3D faces instead of adding a WebGL dependency. Sales analysis supports date ranges up to one year, grouped daily through 35 days and into seven-day buckets for longer ranges.
+
 ## Conflicts and ambiguities found
 
 - **N1 product aspect ratio:** the backlog's N1 asks for 4:3 product artwork, while SPEC §10.1 requires square product imagery. The spec takes precedence; product artwork is square.

@@ -1,5 +1,11 @@
 # UI changelog
 
+## 2026-11-26 — Customer profiles and sales analysis
+
+- Added customer directory search, return-visit and marketing-consent summaries, profile details, purchase history, preference editing, and an audited create/update flow.
+- Added a role-gated Sales analysis page with 7/30/90-day presets, custom date filters, net sales, transactions, gross profit, payment mix, top products, and department/type results.
+- Added responsive SVG charts with shaded front, top, and side faces to give sales and payment bars a 3D depth effect without adding a WebGL runtime.
+
 ## 2026-11-26 — Black, gold, white POS and tablet navigation
 
 - Replaced the sidebar with a settings-branded black top bar, role-aware navigation, a tablet menu, and phone bottom tabs. Updated the login and authenticated app typography and palette.

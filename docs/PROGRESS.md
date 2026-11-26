@@ -2,6 +2,14 @@
 
 Last updated: 2026-11-26
 
+## Customer profiles and sales analysis (2026-11-26)
+
+- Added shop-scoped customer create/edit/profile APIs with normalized Kenyan phone numbers, consent source/date tracking, preference profiles, lifetime spend after approved refunds, and recent purchase history. Customer writes are audited; duplicate phone numbers return a clear conflict response.
+- Added the Customers page for staff and admins with search, repeat-visit and marketing-consent summaries, profile editing, preference tags, and purchase history.
+- Added an admin-only sales analysis API with Nairobi-local date filters, refund-aware net sales and gross profit, payment mix, product performance, and department/type breakdowns. Ranges up to 35 days are grouped by day; longer ranges use seven-day buckets.
+- Added the Sales analysis page with 7/30/90-day presets, custom dates, summary cards, and responsive SVG bar charts with shaded front/top/side faces for a lightweight 3D effect.
+- Reused the current schema; no migration was required. Typecheck and lint passed. The new customer API file was formatted. Repo-wide `format:check` still reports existing style issues across the large app/API files and other untouched files; no broad reformat was applied. Tests and browser audit were not run in this pass.
+
 ## Restyle and tablet pass handoff (2026-11-26)
 
 - Replaced the sidebar with a settings-branded black top bar, role-aware desktop navigation, a tablet menu, and phone bottom tabs. Restyled the public sign-in page and POS in black, gold, white, and paper tones.
@@ -161,7 +169,7 @@ The web app requires an available PostgreSQL database and seeded shop/admin data
 - Added a provider interface with mock and Lipwa adapters, documented Lipwa request/status fields, bearer authentication, and whole-KES amount conversion. STK initiation records the provider request and remains pending until the authenticated Lipwa status query confirms payment.
 - Added callback notifications verified through Lipwa status queries, status polling and 90-second expiry, manual status checks, amount/phone/receipt mismatch handling, payment and sale audits, and an admin unmatched-payment queue. Pending STK sales deduct stock only after confirmed payment; late stock conflicts are accepted and flagged for review.
 - Added the unmatched-payment migration, environment examples, and provider contract tests.
-- **TODO(lipwa):** configure credentials, channel, and public callback URL, then verify the merchant account and live minimum-value transaction before production.
+- Render service `jaypos` now has `LIPWA_API_KEY` and `LIPWA_CHANNEL_ID` set as service environment variables. Deploy `dep-dc3ti7bl550s73fie5rg` completed with status `live`; secret values are not stored in the repository. **TODO(lipwa):** verify the merchant account and complete a minimum-value live transaction, including callback/status reconciliation, before accepting production payments.
 
 ## M6 checks
 
@@ -211,7 +219,7 @@ The web app requires an available PostgreSQL database and seeded shop/admin data
 - Use the approved stack and milestone scope from the user prompt; do not start Phase 2–4 work unless asked.
 - Use `corepack pnpm` commands when a `pnpm` shim is not available.
 - No `.env` or production secrets have been created or committed. The seed generates a one-time admin password if `ADMIN_SEED_PASSWORD` is empty and prints it when creating the initial account.
-- Lipwa credentials, channel ID, callback URL, and a live merchant transaction remain a `TODO(lipwa)` before production.
+- The Render Lipwa API key and channel are configured, and the callback URL remains defined in `render.yaml`. A minimum-value live merchant transaction and callback/status reconciliation remain a `TODO(lipwa)` before production payments.
 
 ## Post-M8 — Loading/performance handoff (2026-11-24)
 

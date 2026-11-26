@@ -60,6 +60,8 @@ const APP_ROUTE_TITLES: Record<string, string> = {
   "/stock": "Stock lookup",
   "/refunds": "Returns",
   "/admin": "Overview",
+  "/admin/analysis": "Sales analysis",
+  "/customers": "Customers",
   "/admin/catalog": "Catalog",
   "/admin/staff": "Staff",
   "/admin/documents": "Receipts & invoices",
@@ -123,6 +125,78 @@ type OwnerSummary = {
     marginPct: number | null;
     saleCount: number;
   }[];
+};
+type CustomerPreferences = {
+  departments: string[];
+  productTypes: string[];
+  scentFamilies: string[];
+  likedNotes: string[];
+  dislikedNotes: string[];
+  brands: string[];
+  budgetMinCents: number | null;
+  budgetMaxCents: number | null;
+  occasions: string[];
+  sizes: string[];
+  colours: string[];
+  notes: string | null;
+};
+type Customer = {
+  id: string;
+  name: string | null;
+  phone: string;
+  email: string | null;
+  birthday: string | null;
+  gender: string | null;
+  smsConsent: boolean;
+  consentAt: string | null;
+  consentSource: string | null;
+  optedOutAt: string | null;
+  loyaltyPoints: number;
+  tier: string | null;
+  creditBalanceCents: number;
+  notes: string | null;
+  preferences: CustomerPreferences | null;
+  purchaseCount: number;
+  lifetimeSalesCents: number;
+  lastVisitAt: string | null;
+  purchases?: {
+    id: string;
+    receiptNo: string | null;
+    status: string;
+    createdAt: string;
+    totalCents: number;
+    payments: { method: string; amountCents: number }[];
+    items: { qty: number; lineTotalCents: number; variant: { product: { name: string } } }[];
+  }[];
+};
+type SalesAnalysis = {
+  range: { from: string; to: string; grouping: "day" | "week" };
+  totals: {
+    netSalesCents: number;
+    grossProfitCents: number;
+    saleCount: number;
+    averageSaleCents: number;
+    marginPct: number | null;
+    refundCents: number;
+  };
+  series: {
+    date: string;
+    endDate: string;
+    netRevenueCents: number;
+    profitCents: number;
+    marginPct: number | null;
+    saleCount: number;
+  }[];
+  payments: { method: string; amountCents: number; paymentCount: number }[];
+  topProducts: {
+    productId: string;
+    name: string;
+    quantity: number;
+    salesCents: number;
+    costCents: number;
+    grossProfitCents: number;
+  }[];
+  topCategories: { department: string; type: string; quantity: number; salesCents: number }[];
 };
 type DocumentSettings = {
   name: string;
@@ -384,6 +458,8 @@ const navSections = [
   ]},
   { label: "Manage", items: [
     { to: "/admin", label: "Overview", icon: "layout" as const, permission: "sales.read.all" },
+    { to: "/admin/analysis", label: "Sales analysis", icon: "layout" as const, permission: "sales.read.all" },
+    { to: "/customers", label: "Customers", icon: "users" as const, permission: "customers.write" },
     { to: "/admin/catalog", label: "Catalog", icon: "package" as const, permission: "catalog.manage" },
     { to: "/admin/staff", label: "Staff", icon: "users" as const, permission: "staff.manage" },
     { to: "/admin/documents", label: "Receipts & invoices", icon: "receipt" as const, permission: "catalog.manage" },
@@ -445,6 +521,7 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
       "/": () => queryClient.prefetchQuery({ queryKey: ["catalog"], queryFn: () => api<Catalog>("/catalog") }),
       "/shift": () => queryClient.prefetchQuery({ queryKey: ["current-shift"], queryFn: () => api("/shifts/current") }),
       "/sales": () => queryClient.prefetchQuery({ queryKey: ["sales", user.role], queryFn: () => api(`/sales${user.role === "admin" ? "?scope=all" : ""}`) }),
+      "/customers": () => queryClient.prefetchQuery({ queryKey: ["customers", ""], queryFn: () => api("/customers") }),
       "/stock": () => queryClient.prefetchQuery({ queryKey: ["stock"], queryFn: () => api("/stock") }),
       "/refunds": () => queryClient.prefetchQuery({ queryKey: ["refunds"], queryFn: () => api("/refunds") }),
       "/admin/catalog": () => queryClient.prefetchQuery({ queryKey: ["catalog"], queryFn: () => api<Catalog>("/catalog") }),
@@ -529,6 +606,7 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
             <Route path="/" element={<POSPage />} />
             <Route path="/shift" element={<ShiftPage />} />
             <Route path="/sales" element={<SalesPage />} />
+            <Route path="/customers" element={<RoleGate permission="customers.write"><CustomersPage /></RoleGate>} />
             <Route path="/stock" element={<StockPage />} />
             <Route path="/refunds" element={<RefundsPage />} />
             <Route
@@ -536,6 +614,14 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
               element={
                 <RoleGate permission="sales.read.all">
                   <DashboardPage />
+                </RoleGate>
+              }
+            />
+            <Route
+              path="/admin/analysis"
+              element={
+                <RoleGate permission="sales.read.all">
+                  <SalesAnalysisPage />
                 </RoleGate>
               }
             />
@@ -2277,6 +2363,265 @@ function RefundsPage() {
   );
 }
 
+function shopDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Nairobi",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((value) => value.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function dateDaysBeforeToday(days: number) {
+  const date = new Date(`${shopDateKey()}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() - days + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function Sales3DChart({
+  items,
+  label,
+}: {
+  items: { label: string; valueCents: number; detail?: string }[];
+  label: string;
+}) {
+  if (!items.length || items.every((item) => item.valueCents <= 0))
+    return <div className="analysis-chart-empty">No sales in this period.</div>;
+  const width = Math.max(800, items.length * 42 + 76);
+  const height = 270;
+  const left = 68;
+  const baseY = 216;
+  const plotHeight = 158;
+  const peak = Math.max(...items.map((item) => item.valueCents));
+  const step = (width - left - 24) / items.length;
+  const barWidth = Math.min(30, step * 0.58);
+  const labelEvery = items.length > 20 ? Math.ceil(items.length / 10) : 1;
+  const axisLabel = (value: number) =>
+    new Intl.NumberFormat("en-KE", { notation: "compact", maximumFractionDigits: 1 }).format(
+      value / 100,
+    );
+  return (
+    <div className="analysis-chart-viewport">
+      <svg
+        className="analysis-chart-svg"
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label={label}
+      >
+        {[0, 0.5, 1].map((fraction) => {
+          const y = baseY - plotHeight * fraction;
+          return (
+            <g key={fraction}>
+              <line className="analysis-grid-line" x1={left} x2={width - 12} y1={y} y2={y} />
+              <text className="analysis-axis-label" x={left - 10} y={y - 4} textAnchor="end">
+                {axisLabel(peak * fraction)}
+              </text>
+            </g>
+          );
+        })}
+        {items.map((item, index) => {
+          const x = left + index * step + (step - barWidth - 8) / 2;
+          const barHeight = item.valueCents > 0 ? Math.max(4, (item.valueCents / peak) * plotHeight) : 0;
+          const top = baseY - barHeight;
+          const depthX = 8;
+          const depthY = 6;
+          const showLabel = index % labelEvery === 0 || index === items.length - 1;
+          return (
+            <g
+              key={`${item.label}-${index}`}
+              className="analysis-3d-column"
+              tabIndex={0}
+              aria-label={`${item.label}: ${money(item.valueCents)}${item.detail ? `, ${item.detail}` : ""}`}
+            >
+              <title>{`${item.label}: ${money(item.valueCents)}${item.detail ? ` · ${item.detail}` : ""}`}</title>
+              {barHeight > 0 && (
+                <>
+                  <polygon
+                    className="analysis-bar-side"
+                    points={`${x + barWidth},${top} ${x + barWidth + depthX},${top - depthY} ${x + barWidth + depthX},${baseY - depthY} ${x + barWidth},${baseY}`}
+                  />
+                  <polygon
+                    className="analysis-bar-top"
+                    points={`${x},${top} ${x + depthX},${top - depthY} ${x + barWidth + depthX},${top - depthY} ${x + barWidth},${top}`}
+                  />
+                  <rect
+                    className="analysis-bar-front"
+                    x={x}
+                    y={top}
+                    width={barWidth}
+                    height={barHeight}
+                    rx="2"
+                  />
+                </>
+              )}
+              {showLabel && (
+                <text className="analysis-bar-label" x={x + barWidth / 2 + 3} y={baseY + 22} textAnchor="middle">
+                  {item.label}
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function paymentMethodName(method: string) {
+  const names: Record<string, string> = {
+    cash: "Cash",
+    mpesa_stk: "M-Pesa STK",
+    mpesa_manual: "Manual M-Pesa",
+    card: "Card",
+    credit: "Customer credit",
+  };
+  return names[method] ?? method.replaceAll("_", " ");
+}
+
+function SalesAnalysisPage() {
+  const [preset, setPreset] = useState<number | null>(30);
+  const [from, setFrom] = useState(() => dateDaysBeforeToday(30));
+  const [to, setTo] = useState(() => shopDateKey());
+  const [appliedRange, setAppliedRange] = useState(() => ({
+    from: dateDaysBeforeToday(30),
+    to: shopDateKey(),
+  }));
+  const { data, isPending, error } = useQuery({
+    queryKey: ["sales-analysis", appliedRange.from, appliedRange.to],
+    queryFn: () =>
+      api<SalesAnalysis>(`/sales/reports/analysis?from=${encodeURIComponent(appliedRange.from)}&to=${encodeURIComponent(appliedRange.to)}`),
+    enabled: Boolean(appliedRange.from && appliedRange.to && appliedRange.from <= appliedRange.to),
+  });
+  const showLoading = useDelayedLoading(isPending);
+  const series = (data?.series ?? []).map((bucket) => ({
+    label: shopDate(`${bucket.date}T00:00:00+03:00`, {
+      month: "short",
+      day: "numeric",
+      dateStyle: undefined,
+    }),
+    valueCents: bucket.netRevenueCents,
+    detail: `${bucket.saleCount} sales · profit ${money(bucket.profitCents)}`,
+  }));
+  const paymentBars = (data?.payments ?? []).map((payment) => ({
+    label: paymentMethodName(payment.method),
+    valueCents: payment.amountCents,
+    detail: `${payment.paymentCount} payments`,
+  }));
+  return (
+    <>
+      <PageHeader
+        eyebrow="PERFORMANCE"
+        title="Sales analysis"
+        detail="Track sales, profit, payment mix and product performance across a date range."
+      />
+      <section className="analysis-toolbar surface">
+        <div className="analysis-presets" aria-label="Quick date ranges">
+          {[7, 30, 90].map((days) => (
+            <button
+              key={days}
+              type="button"
+              className={`analysis-range-button ${preset === days ? "analysis-range-active" : ""}`}
+              onClick={() => {
+                setPreset(days);
+                const next = { from: dateDaysBeforeToday(days), to: shopDateKey() };
+                setFrom(next.from);
+                setTo(next.to);
+                setAppliedRange(next);
+              }}
+            >
+              {days} days
+            </button>
+          ))}
+        </div>
+        <form
+          className="analysis-date-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setPreset(null);
+            if (from && to && from <= to) setAppliedRange({ from, to });
+          }}
+        >
+          <Field label="From">
+            <input type="date" value={from} max={to || shopDateKey()} onChange={(event) => { setFrom(event.target.value); setPreset(null); }} />
+          </Field>
+          <Field label="To">
+            <input type="date" value={to} min={from} max={shopDateKey()} onChange={(event) => { setTo(event.target.value); setPreset(null); }} />
+          </Field>
+          <Button disabled={!from || !to || from > to}>Apply range</Button>
+        </form>
+      </section>
+      {from && to && from > to && <Notice tone="error">The end date must be on or after the start date.</Notice>}
+      {showLoading && <TableSkeleton columns={4} />}
+      {error && <Notice tone="error">{error.message}</Notice>}
+      {data && (
+        <>
+          <section className="metric-grid metric-grid-three analysis-metrics">
+            <Metric label="Net sales" value={money(data.totals.netSalesCents)} detail={`${money(data.totals.refundCents)} approved refunds`} />
+            <Metric label="Transactions" value={String(data.totals.saleCount)} detail={`Average basket ${money(data.totals.averageSaleCents)}`} />
+            <Metric label="Gross profit" value={money(data.totals.grossProfitCents)} detail={`Margin ${data.totals.marginPct === null ? "—" : `${data.totals.marginPct}%`}`} />
+          </section>
+          <section className="surface chart-surface analysis-chart-card">
+            <div className="section-title-row">
+              <div>
+                <h2>Sales trend</h2>
+                <p className="muted">Net revenue after approved refunds · grouped by {data.range.grouping}</p>
+              </div>
+              <span className="chart-legend"><span /> Net sales</span>
+            </div>
+            <Sales3DChart items={series} label="Three-dimensional bar chart of net sales over the selected period" />
+            {data.totals.saleCount === 0 && <p className="analysis-chart-caption">No completed sales in this date range.</p>}
+          </section>
+          <div className="analysis-lower-grid">
+            <section className="surface chart-surface">
+              <div className="section-title-row">
+                <div>
+                  <h2>Payment mix</h2>
+                  <p className="muted">Confirmed payments by method</p>
+                </div>
+              </div>
+              <Sales3DChart items={paymentBars} label="Three-dimensional bar chart of confirmed payments by method" />
+            </section>
+            <section className="surface table-surface analysis-rankings">
+              <div className="section-title-row">
+                <h2>Top products</h2>
+                <span className="muted">By units sold</span>
+              </div>
+              <DataTable
+                headers={["Product", "Units", "Sales", "Profit"]}
+                rows={data.topProducts.map((product) => [
+                  <b>{product.name}</b>,
+                  product.quantity,
+                  money(product.salesCents),
+                  money(product.grossProfitCents),
+                ])}
+                empty="Product sales will appear here."
+              />
+            </section>
+          </div>
+          <section className="surface table-surface section-spaced">
+            <div className="section-title-row">
+              <h2>Department and type performance</h2>
+              <span className="muted">By units sold</span>
+            </div>
+            <DataTable
+              headers={["Department", "Type", "Units", "Sales"]}
+              rows={data.topCategories.map((category) => [
+                category.department,
+                category.type,
+                category.quantity,
+                money(category.salesCents),
+              ])}
+              empty="Department and type results will appear here."
+            />
+          </section>
+        </>
+      )}
+    </>
+  );
+}
+
 function DashboardPage() {
   const [reportPending, setReportPending] = useState(false);
   const [reportError, setReportError] = useState("");
@@ -2440,6 +2785,362 @@ function DashboardPage() {
       </section>
       <UnmatchedPaymentsPanel />
     </>
+  );
+}
+
+function toPreferenceList(value: string) {
+  return value
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function CustomersPage() {
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 180);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Customer | null | undefined>(undefined);
+  const { data, isPending, error } = useQuery({
+    queryKey: ["customers", debouncedSearch],
+    queryFn: () => api<{ customers: Customer[]; limit: number }>(`/customers${debouncedSearch ? `?q=${encodeURIComponent(debouncedSearch)}` : ""}`),
+  });
+  const showLoading = useDelayedLoading(isPending);
+  const customers = data?.customers ?? [];
+  const repeatCustomers = (data?.customers ?? []).filter((customer) => customer.purchaseCount > 1).length;
+  const optedIn = (data?.customers ?? []).filter((customer) => customer.smsConsent && !customer.optedOutAt).length;
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="RELATIONSHIPS"
+        title="Customers"
+        detail="Customer profiles, purchase history, preferences and marketing consent."
+        action={<Button onClick={() => setEditing(null)}>Add customer</Button>}
+      />
+      <section className="metric-grid metric-grid-three customer-metrics">
+        <Metric label="Customers" value={String(data?.customers.length ?? 0)} detail="Saved customer profiles" />
+        <Metric label="Returning customers" value={String(repeatCustomers)} detail="More than one completed purchase" />
+        <Metric label="Marketing opted in" value={String(optedIn)} detail="Consent recorded and not opted out" />
+      </section>
+      <section className="surface table-surface customer-list-surface">
+        <div className="customer-list-toolbar">
+          <div>
+            <h2>Customer directory</h2>
+            <p className="muted">Open a profile to review purchases and edit preferences.</p>
+          </div>
+          <div className="search-wrap search-wrap-light customer-search">
+            <span>Find</span>
+            <input
+              aria-label="Search customers"
+              placeholder="Name, phone or email"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
+        </div>
+        {error && <Notice tone="error">{error.message}</Notice>}
+        {showLoading ? <TableSkeleton columns={5} /> : (
+          <DataTable
+            headers={["Customer", "Purchases", "Lifetime sales", "Last visit", "Marketing", "Profile"]}
+            empty={search ? "No customers match this search." : "No customer profiles yet. Add the first customer."}
+            rows={customers.map((customer) => [
+              <div className="customer-table-identity">
+                <b>{customer.name || "Unnamed customer"}</b>
+                <small>{customer.phone}{customer.email ? ` · ${customer.email}` : ""}</small>
+              </div>,
+              customer.purchaseCount,
+              money(customer.lifetimeSalesCents),
+              customer.lastVisitAt ? shopDate(customer.lastVisitAt) : "No visits yet",
+              <span className={`customer-consent ${customer.smsConsent && !customer.optedOutAt ? "customer-consent-on" : ""}`}>
+                {customer.smsConsent && !customer.optedOutAt ? "Opted in" : customer.optedOutAt ? "Opted out" : "Not opted in"}
+              </span>,
+              <button className="text-button" type="button" onClick={() => setSelectedId(customer.id)}>
+                View profile
+              </button>,
+            ])}
+          />
+        )}
+        {(data?.customers.length ?? 0) >= (data?.limit ?? 500) && (
+          <p className="customer-limit-note">Showing the latest {data?.limit} profiles. Refine the list with search.</p>
+        )}
+      </section>
+      {selectedId && (
+        <CustomerProfileDialog
+          customerId={selectedId}
+          onClose={() => setSelectedId(null)}
+          onEdit={(customer) => {
+            setSelectedId(null);
+            setEditing(customer);
+          }}
+        />
+      )}
+      {editing !== undefined && (
+        <CustomerEditor
+          customer={editing}
+          onClose={() => setEditing(undefined)}
+          onSaved={(id) => {
+            setEditing(undefined);
+            setSelectedId(id);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function CustomerProfileDialog({
+  customerId,
+  onClose,
+  onEdit,
+}: {
+  customerId: string;
+  onClose: () => void;
+  onEdit: (customer: Customer) => void;
+}) {
+  const { data, isPending, error } = useQuery({
+    queryKey: ["customer", customerId],
+    queryFn: () => api<{ customer: Customer }>(`/customers/${customerId}`),
+  });
+  const customer = data?.customer;
+  const preferences = customer?.preferences;
+  const groups = preferences
+    ? [
+        ["Departments", preferences.departments],
+        ["Types", preferences.productTypes],
+        ["Brands", preferences.brands],
+        ["Scent families", preferences.scentFamilies],
+        ["Liked notes", preferences.likedNotes],
+        ["Avoided notes", preferences.dislikedNotes],
+        ["Sizes", preferences.sizes],
+        ["Colours", preferences.colours],
+        ["Occasions", preferences.occasions],
+      ] as [string, string[]][]
+    : [];
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="modal-card customer-profile-modal" role="dialog" aria-modal="true" aria-labelledby="customer-profile-title">
+        <button className="modal-close" onClick={onClose} aria-label="Close customer profile"><Icon name="x" /></button>
+        {isPending ? <FormSkeleton /> : error ? <Notice tone="error">{error.message}</Notice> : customer ? (
+          <>
+            <p className="eyebrow">CUSTOMER PROFILE</p>
+            <div className="customer-profile-heading">
+              <div>
+                <h2 id="customer-profile-title">{customer.name || "Unnamed customer"}</h2>
+                <p className="muted">{customer.phone}{customer.email ? ` · ${customer.email}` : ""}</p>
+              </div>
+              <Button onClick={() => onEdit(customer)}>Edit profile</Button>
+            </div>
+            <div className="metric-grid metric-grid-three customer-profile-metrics">
+              <Metric label="Lifetime sales" value={money(customer.lifetimeSalesCents)} detail={`${customer.purchaseCount} completed purchases`} />
+              <Metric label="Last visit" value={customer.lastVisitAt ? shopDate(customer.lastVisitAt) : "—"} detail={customer.lastVisitAt ? shopDateTime(customer.lastVisitAt) : "No completed purchases yet"} />
+              <Metric label="Loyalty and credit" value={`${customer.loyaltyPoints} points`} detail={`Credit balance ${money(customer.creditBalanceCents)}`} />
+            </div>
+            <div className="customer-profile-meta">
+              {customer.birthday && <span>Birthday · {shopDate(customer.birthday)}</span>}
+              {customer.gender && <span>{customer.gender}</span>}
+              <span className={`customer-consent ${customer.smsConsent && !customer.optedOutAt ? "customer-consent-on" : ""}`}>
+                {customer.smsConsent && !customer.optedOutAt
+                  ? `Marketing consent · ${customer.consentSource || "recorded"}${customer.consentAt ? ` · ${shopDate(customer.consentAt)}` : ""}`
+                  : customer.optedOutAt ? `Opted out · ${shopDate(customer.optedOutAt)}` : "Marketing consent not recorded"}
+              </span>
+            </div>
+            <section className="customer-preferences-section">
+              <h3>Preferences</h3>
+              {groups.some(([, values]) => values.length) || preferences?.budgetMinCents != null || preferences?.budgetMaxCents != null ? (
+                <div className="customer-preference-groups">
+                  {groups.filter(([, values]) => values.length).map(([title, values]) => (
+                    <div className="customer-preference-group" key={title}>
+                      <small>{title}</small>
+                      <div className="customer-tag-list">{values.map((value) => <span className="customer-tag" key={value}>{value}</span>)}</div>
+                    </div>
+                  ))}
+                  {(preferences?.budgetMinCents != null || preferences?.budgetMaxCents != null) && (
+                    <div className="customer-preference-group"><small>Budget</small><b>{preferences?.budgetMinCents != null ? money(preferences.budgetMinCents) : "Any"} – {preferences?.budgetMaxCents != null ? money(preferences.budgetMaxCents) : "Any"}</b></div>
+                  )}
+                  {preferences?.notes && <p className="customer-notes">{preferences.notes}</p>}
+                </div>
+              ) : <p className="muted">No preferences saved yet.</p>}
+            </section>
+            {customer.notes && <p className="customer-notes"><b>Notes</b><br />{customer.notes}</p>}
+            <section className="table-surface customer-history">
+              <div className="section-title-row"><h3>Purchase history</h3><span className="muted">Most recent 20</span></div>
+              <DataTable
+                headers={["Receipt", "Date", "Items", "Total", "Status"]}
+                empty="Completed purchases for this customer will appear here."
+                rows={(customer.purchases ?? []).map((sale) => [
+                  sale.receiptNo || "Sale",
+                  shopDateTime(sale.createdAt),
+                  sale.items.map((item) => `${item.variant.product.name} × ${item.qty}`).join(", "),
+                  money(sale.totalCents),
+                  <StatusPill value={sale.status} />,
+                ])}
+              />
+            </section>
+          </>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+type CustomerFormState = {
+  name: string;
+  phone: string;
+  email: string;
+  birthday: string;
+  gender: string;
+  smsConsent: boolean;
+  consentSource: string;
+  notes: string;
+  departments: string;
+  productTypes: string;
+  brands: string;
+  scentFamilies: string;
+  likedNotes: string;
+  dislikedNotes: string;
+  sizes: string;
+  colours: string;
+  occasions: string;
+  budgetMin: string;
+  budgetMax: string;
+  preferenceNotes: string;
+};
+
+function CustomerEditor({
+  customer,
+  onClose,
+  onSaved,
+}: {
+  customer: Customer | null;
+  onClose: () => void;
+  onSaved: (id: string) => void;
+}) {
+  const client = useQueryClient();
+  const preferences = customer?.preferences;
+  const [form, setForm] = useState<CustomerFormState>(() => ({
+    name: customer?.name ?? "",
+    phone: customer?.phone ?? "",
+    email: customer?.email ?? "",
+    birthday: customer?.birthday?.slice(0, 10) ?? "",
+    gender: customer?.gender ?? "",
+    smsConsent: customer?.smsConsent ?? false,
+    consentSource: customer?.consentSource ?? "",
+    notes: customer?.notes ?? "",
+    departments: preferences?.departments.join(", ") ?? "",
+    productTypes: preferences?.productTypes.join(", ") ?? "",
+    brands: preferences?.brands.join(", ") ?? "",
+    scentFamilies: preferences?.scentFamilies.join(", ") ?? "",
+    likedNotes: preferences?.likedNotes.join(", ") ?? "",
+    dislikedNotes: preferences?.dislikedNotes.join(", ") ?? "",
+    sizes: preferences?.sizes.join(", ") ?? "",
+    colours: preferences?.colours.join(", ") ?? "",
+    occasions: preferences?.occasions.join(", ") ?? "",
+    budgetMin: preferences?.budgetMinCents != null ? currencyInput(preferences.budgetMinCents) : "",
+    budgetMax: preferences?.budgetMaxCents != null ? currencyInput(preferences.budgetMaxCents) : "",
+    preferenceNotes: preferences?.notes ?? "",
+  }));
+  function update<K extends keyof CustomerFormState>(key: K, value: CustomerFormState[K]) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+  const mutation = useMutation({
+    mutationFn: () => {
+      const body = {
+        name: form.name.trim() || null,
+        phone: form.phone,
+        email: form.email.trim() || null,
+        birthday: form.birthday || null,
+        gender: form.gender.trim() || null,
+        smsConsent: form.smsConsent,
+        consentSource: form.smsConsent ? form.consentSource.trim() || null : null,
+        notes: form.notes.trim() || null,
+        preferences: {
+          departments: toPreferenceList(form.departments),
+          productTypes: toPreferenceList(form.productTypes),
+          brands: toPreferenceList(form.brands),
+          scentFamilies: toPreferenceList(form.scentFamilies),
+          likedNotes: toPreferenceList(form.likedNotes),
+          dislikedNotes: toPreferenceList(form.dislikedNotes),
+          sizes: toPreferenceList(form.sizes),
+          colours: toPreferenceList(form.colours),
+          occasions: toPreferenceList(form.occasions),
+          budgetMinCents: form.budgetMin.trim() ? cents(form.budgetMin) : null,
+          budgetMaxCents: form.budgetMax.trim() ? cents(form.budgetMax) : null,
+          notes: form.preferenceNotes.trim() || null,
+        },
+      };
+      return api<{ customer: Customer }>(customer ? `/customers/${customer.id}` : "/customers", {
+        method: customer ? "PATCH" : "POST",
+        body: JSON.stringify(body),
+      });
+    },
+    onSuccess: (result) => {
+      void client.invalidateQueries({ queryKey: ["customers"] });
+      void client.invalidateQueries({ queryKey: ["customer", result.customer.id] });
+      onSaved(result.customer.id);
+    },
+  });
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !mutation.isPending) onClose(); }}>
+      <section className="modal-card customer-editor-modal" role="dialog" aria-modal="true" aria-labelledby="customer-editor-title">
+        <button className="modal-close" onClick={onClose} aria-label="Close customer form" disabled={mutation.isPending}><Icon name="x" /></button>
+        <p className="eyebrow">CUSTOMER DETAILS</p>
+        <h2 id="customer-editor-title">{customer ? "Edit customer" : "Add customer"}</h2>
+        <form
+          onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}
+          inert={mutation.isPending || undefined}
+        >
+          <div className="customer-editor-body">
+            <div className="customer-editor-grid">
+              <Field label="Name (optional)"><input value={form.name} onChange={(event) => update("name", event.target.value)} maxLength={120} /></Field>
+              <Field label="Phone number"><input value={form.phone} onChange={(event) => update("phone", event.target.value)} placeholder="07xx xxx xxx" required /></Field>
+              <Field label="Email (optional)"><input type="email" value={form.email} onChange={(event) => update("email", event.target.value)} /></Field>
+              <Field label="Birthday (optional)"><input type="date" value={form.birthday} onChange={(event) => update("birthday", event.target.value)} /></Field>
+              <Field label="Gender (optional)"><input value={form.gender} onChange={(event) => update("gender", event.target.value)} maxLength={40} /></Field>
+            </div>
+            <section className="customer-editor-section">
+              <h3>Marketing consent</h3>
+              <label className="customer-consent-toggle">
+                <input type="checkbox" checked={form.smsConsent} onChange={(event) => update("smsConsent", event.target.checked)} />
+                <span>Customer agreed to receive marketing SMS</span>
+              </label>
+              {form.smsConsent && (
+                <Field label="Consent source">
+                  <select value={form.consentSource} onChange={(event) => update("consentSource", event.target.value)} required>
+                    <option value="">Choose how consent was given</option>
+                    <option value="till">At the till</option>
+                    <option value="form">Customer form</option>
+                    <option value="verbal">Verbal</option>
+                  </select>
+                </Field>
+              )}
+            </section>
+            <section className="customer-editor-section">
+              <h3>Shopping preferences</h3>
+              <div className="customer-editor-grid">
+                <Field label="Departments" hint="Separate values with commas"><input value={form.departments} onChange={(event) => update("departments", event.target.value)} placeholder="Ladies, Children" /></Field>
+                <Field label="Product types" hint="Separate values with commas"><input value={form.productTypes} onChange={(event) => update("productTypes", event.target.value)} placeholder="Perfumes, Skincare" /></Field>
+                <Field label="Favourite brands" hint="Separate values with commas"><input value={form.brands} onChange={(event) => update("brands", event.target.value)} /></Field>
+                <Field label="Scent families" hint="Separate values with commas"><input value={form.scentFamilies} onChange={(event) => update("scentFamilies", event.target.value)} placeholder="Floral, Woody" /></Field>
+                <Field label="Liked notes" hint="Separate values with commas"><input value={form.likedNotes} onChange={(event) => update("likedNotes", event.target.value)} /></Field>
+                <Field label="Avoided notes" hint="Separate values with commas"><input value={form.dislikedNotes} onChange={(event) => update("dislikedNotes", event.target.value)} /></Field>
+                <Field label="Preferred sizes" hint="Separate values with commas"><input value={form.sizes} onChange={(event) => update("sizes", event.target.value)} /></Field>
+                <Field label="Preferred colours" hint="Separate values with commas"><input value={form.colours} onChange={(event) => update("colours", event.target.value)} /></Field>
+                <Field label="Occasions" hint="Separate values with commas"><input value={form.occasions} onChange={(event) => update("occasions", event.target.value)} /></Field>
+                <Field label="Minimum budget (KES)"><input type="number" min="0" step="0.01" value={form.budgetMin} onChange={(event) => update("budgetMin", event.target.value)} /></Field>
+                <Field label="Maximum budget (KES)"><input type="number" min="0" step="0.01" value={form.budgetMax} onChange={(event) => update("budgetMax", event.target.value)} /></Field>
+              </div>
+              <Field label="Preference notes"><textarea rows={2} value={form.preferenceNotes} onChange={(event) => update("preferenceNotes", event.target.value)} maxLength={1000} /></Field>
+            </section>
+            <Field label="Customer notes"><textarea rows={3} value={form.notes} onChange={(event) => update("notes", event.target.value)} maxLength={2000} /></Field>
+            <FormError value={mutation.error} />
+          </div>
+          <div className="customer-editor-footer">
+            <button className="text-button" type="button" onClick={onClose} disabled={mutation.isPending}>Cancel</button>
+            <Button loading={mutation.isPending}>{customer ? "Save customer" : "Create customer"}</Button>
+          </div>
+        </form>
+      </section>
+    </div>
   );
 }
 

@@ -317,6 +317,254 @@ async function getOwnerSummary(shopId: string) {
   return { today: summary[6]!, days: summary };
 }
 
+async function getSalesAnalysis(shopId: string, from: string, to: string) {
+  const dayCount =
+    (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1;
+  const groupByWeek = dayCount > 35;
+  const bucketCount = groupByWeek ? Math.ceil(dayCount / 7) : dayCount;
+  const buckets = Array.from({ length: bucketCount }, (_, index) => {
+    const startDate = addDateDays(from, index * (groupByWeek ? 7 : 1));
+    const endDate = addDateDays(startDate, groupByWeek ? 7 : 1);
+    return {
+      startDate,
+      endDate: endDate > addDateDays(to, 1) ? addDateDays(to, 1) : endDate,
+      start: nairobiDayStart(startDate),
+      end: nairobiDayStart(endDate),
+      grossSalesCents: 0,
+      taxCents: 0,
+      costCents: 0,
+      approvedRefundCents: 0,
+      refundedTaxCents: 0,
+      restockedCostCents: 0,
+      saleCount: 0,
+    };
+  });
+  const rangeStart = nairobiDayStart(from);
+  const rangeEnd = nairobiDayStart(addDateDays(to, 1));
+  const [sales, refunds] = await Promise.all([
+    prisma.sale.findMany({
+      where: businessWhere(shopId, {
+        status: { in: [SaleStatus.completed, SaleStatus.partially_refunded, SaleStatus.refunded] },
+        createdAt: { gte: rangeStart, lt: rangeEnd },
+      }),
+      select: {
+        createdAt: true,
+        totalCents: true,
+        taxCents: true,
+        items: {
+          select: {
+            qty: true,
+            unitCostCents: true,
+            lineTotalCents: true,
+            variant: {
+              select: {
+                product: {
+                  select: {
+                    id: true,
+                    name: true,
+                    department: { select: { name: true } },
+                    productType: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        payments: {
+          where: { status: PaymentStatus.paid },
+          select: { method: true, amountCents: true },
+        },
+      },
+    }),
+    prisma.refund.findMany({
+      where: businessWhere(shopId, {
+        status: RefundStatus.approved,
+        updatedAt: { gte: rangeStart, lt: rangeEnd },
+      }),
+      select: {
+        updatedAt: true,
+        amountCents: true,
+        items: {
+          select: {
+            quantity: true,
+            disposition: true,
+            saleItem: {
+              select: {
+                unitCostCents: true,
+                qty: true,
+                taxCents: true,
+                lineTotalCents: true,
+                variant: {
+                  select: {
+                    product: {
+                      select: {
+                        id: true,
+                        name: true,
+                        department: { select: { name: true } },
+                        productType: { select: { name: true } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+  ]);
+
+  const bucketFor = (date: Date) => {
+    const day = nairobiDateKey(date);
+    return buckets.find(({ startDate, endDate }) => day >= startDate && day < endDate);
+  };
+  const payments = new Map<string, { amountCents: number; paymentCount: number }>();
+  const products = new Map<
+    string,
+    { productId: string; name: string; quantity: number; salesCents: number; costCents: number }
+  >();
+  const categories = new Map<
+    string,
+    { department: string; type: string; quantity: number; salesCents: number }
+  >();
+
+  for (const sale of sales) {
+    const bucket = bucketFor(sale.createdAt);
+    if (!bucket) continue;
+    bucket.grossSalesCents += sale.totalCents;
+    bucket.taxCents += sale.taxCents;
+    bucket.costCents += sale.items.reduce((sum, item) => sum + item.unitCostCents * item.qty, 0);
+    bucket.saleCount += 1;
+    for (const payment of sale.payments) {
+      const current = payments.get(payment.method) ?? { amountCents: 0, paymentCount: 0 };
+      current.amountCents += payment.amountCents;
+      current.paymentCount += 1;
+      payments.set(payment.method, current);
+    }
+    for (const item of sale.items) {
+      const product = item.variant.product;
+      const currentProduct = products.get(product.id) ?? {
+        productId: product.id,
+        name: product.name,
+        quantity: 0,
+        salesCents: 0,
+        costCents: 0,
+      };
+      currentProduct.quantity += item.qty;
+      currentProduct.salesCents += item.lineTotalCents;
+      currentProduct.costCents += item.unitCostCents * item.qty;
+      products.set(product.id, currentProduct);
+
+      const categoryKey = `${product.department.name}\u0000${product.productType.name}`;
+      const currentCategory = categories.get(categoryKey) ?? {
+        department: product.department.name,
+        type: product.productType.name,
+        quantity: 0,
+        salesCents: 0,
+      };
+      currentCategory.quantity += item.qty;
+      currentCategory.salesCents += item.lineTotalCents;
+      categories.set(categoryKey, currentCategory);
+    }
+  }
+  for (const refund of refunds) {
+    const bucket = bucketFor(refund.updatedAt);
+    if (!bucket) continue;
+    bucket.approvedRefundCents += refund.amountCents;
+    bucket.refundedTaxCents += refund.items.reduce(
+      (sum, item) => sum + Math.round((item.saleItem.taxCents * item.quantity) / item.saleItem.qty),
+      0,
+    );
+    bucket.restockedCostCents += refund.items.reduce(
+      (sum, item) =>
+        sum + (item.disposition === "restock" ? item.saleItem.unitCostCents * item.quantity : 0),
+      0,
+    );
+    for (const item of refund.items) {
+      const product = item.saleItem.variant.product;
+      const refundedRevenueCents = Math.round(
+        (item.saleItem.lineTotalCents * item.quantity) / item.saleItem.qty,
+      );
+      const productRow = products.get(product.id) ?? {
+        productId: product.id,
+        name: product.name,
+        quantity: 0,
+        salesCents: 0,
+        costCents: 0,
+      };
+      productRow.quantity -= item.quantity;
+      productRow.salesCents -= refundedRevenueCents;
+      if (item.disposition === "restock")
+        productRow.costCents -= item.saleItem.unitCostCents * item.quantity;
+      products.set(product.id, productRow);
+
+      const categoryKey = `${product.department.name}\u0000${product.productType.name}`;
+      const categoryRow = categories.get(categoryKey) ?? {
+        department: product.department.name,
+        type: product.productType.name,
+        quantity: 0,
+        salesCents: 0,
+      };
+      categoryRow.quantity -= item.quantity;
+      categoryRow.salesCents -= refundedRevenueCents;
+      categories.set(categoryKey, categoryRow);
+    }
+  }
+
+  const series = buckets.map((bucket) => {
+    const result = calculateProfitability({
+      grossSalesCents: bucket.grossSalesCents,
+      taxCents: bucket.taxCents,
+      costCents: bucket.costCents,
+      approvedRefundCents: bucket.approvedRefundCents,
+      refundedTaxCents: bucket.refundedTaxCents,
+      restockedCostCents: bucket.restockedCostCents,
+    });
+    return {
+      date: bucket.startDate,
+      endDate: bucket.endDate,
+      ...result,
+      saleCount: bucket.saleCount,
+    };
+  });
+  const totals = series.reduce(
+    (result, bucket) => ({
+      netSalesCents: result.netSalesCents + bucket.netRevenueCents,
+      grossProfitCents: result.grossProfitCents + bucket.profitCents,
+      saleCount: result.saleCount + bucket.saleCount,
+    }),
+    { netSalesCents: 0, grossProfitCents: 0, saleCount: 0 },
+  );
+  return {
+    range: { from, to, grouping: groupByWeek ? "week" : "day" },
+    totals: {
+      ...totals,
+      averageSaleCents: totals.saleCount ? Math.round(totals.netSalesCents / totals.saleCount) : 0,
+      marginPct:
+        totals.netSalesCents > 0
+          ? Number(((totals.grossProfitCents / totals.netSalesCents) * 100).toFixed(1))
+          : null,
+      refundCents: refunds.reduce((sum, refund) => sum + refund.amountCents, 0),
+    },
+    series,
+    payments: [...payments.entries()]
+      .map(([method, values]) => ({ method, ...values }))
+      .sort((a, b) => b.amountCents - a.amountCents),
+    topProducts: [...products.values()]
+      .filter((product) => product.quantity > 0)
+      .sort((a, b) => b.quantity - a.quantity || b.salesCents - a.salesCents)
+      .slice(0, 8)
+      .map((product) => ({
+        ...product,
+        grossProfitCents: product.salesCents - product.costCents,
+      })),
+    topCategories: [...categories.values()]
+      .filter((category) => category.quantity > 0)
+      .sort((a, b) => b.quantity - a.quantity || b.salesCents - a.salesCents)
+      .slice(0, 8),
+  };
+}
+
 export const salesRouter = Router();
 salesRouter.get(
   "/documents/settings",
@@ -401,6 +649,38 @@ salesRouter.get(
     if (user.role.name !== "admin") return response.status(403).json({ error: "Forbidden" });
 
     return response.json(await getOwnerSummary(user.shopId));
+  },
+);
+
+salesRouter.get(
+  "/reports/analysis",
+  requirePermission("sales.read.all"),
+  async (request: AuthenticatedRequest, response) => {
+    const user = request.authUser!;
+    if (user.role.name !== "admin") return response.status(403).json({ error: "Forbidden" });
+    const parsed = z
+      .object({
+        from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      })
+      .safeParse(request.query);
+    if (!parsed.success)
+      return response.status(400).json({ error: "Choose a valid start and end date" });
+    const { from, to } = parsed.data;
+    const fromDate = new Date(`${from}T00:00:00.000Z`);
+    const toDate = new Date(`${to}T00:00:00.000Z`);
+    if (
+      Number.isNaN(fromDate.getTime()) ||
+      Number.isNaN(toDate.getTime()) ||
+      fromDate.toISOString().slice(0, 10) !== from ||
+      toDate.toISOString().slice(0, 10) !== to
+    )
+      return response.status(400).json({ error: "Choose real calendar dates" });
+    const dayCount = (toDate.getTime() - fromDate.getTime()) / 86_400_000 + 1;
+    if (dayCount < 1 || dayCount > 366)
+      return response.status(400).json({ error: "Choose a date range of up to one year" });
+    response.setHeader("Cache-Control", "no-store");
+    return response.json(await getSalesAnalysis(user.shopId, from, to));
   },
 );
 
