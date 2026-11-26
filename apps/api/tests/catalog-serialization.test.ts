@@ -15,6 +15,7 @@ const sample = {
   variants: [
     {
       id: "variant-1",
+      active: true,
       sku: "SELL-1",
       barcode: null,
       attributesJson: { sizeMl: 50 },
@@ -33,6 +34,7 @@ const sample = {
     },
     {
       id: "variant-2",
+      active: false,
       sku: "TEST-1",
       barcode: null,
       attributesJson: {},
@@ -58,12 +60,14 @@ describe("catalog serialization", () => {
     expect(serialized.variants).toHaveLength(1);
     expect(serialized).not.toHaveProperty("testerVariants");
     expect(serialized.variants[0]).not.toHaveProperty("costCents");
+    expect(serialized.variants[0]).toHaveProperty("active", true);
     expect(JSON.stringify(serialized)).not.toMatch(/costCents|profit/i);
   });
 
   it("exposes cost and dedicated tester stock only to admins", () => {
     const serialized = publicProduct(sample, true);
     expect(serialized.variants[0]).toHaveProperty("costCents", 500);
+    expect(serialized.testerVariants?.[0]).toHaveProperty("active", false);
     expect(serialized.testerVariants).toHaveLength(1);
   });
 });

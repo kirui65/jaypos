@@ -2793,6 +2793,41 @@ button, a, input, select, textarea { transition-duration: 150ms; }
 }
 .product-placeholder .product-type-icon { width: 28px; height: 28px; color: var(--ej-gold-deep); }
 .product-placeholder small { font-size: 12px; }
+
+.stock-toolbar {
+  align-items: end;
+  flex-wrap: wrap;
+}
+.stock-toolbar .search-wrap {
+  flex: 1 1 260px;
+}
+.stock-toolbar > .field {
+  flex: 0 1 190px;
+}
+.stock-actions {
+  display: flex;
+  min-width: 220px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ej-space-2);
+}
+.stock-actions .button {
+  min-height: 36px;
+  padding: 0 var(--ej-space-3);
+  font-size: var(--ej-font-small);
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .stock-toolbar {
+    align-items: stretch;
+  }
+  .stock-toolbar > .field {
+    flex: 1 1 100%;
+  }
+  .stock-toolbar .result-count {
+    width: 100%;
+  }
+}
 .product-art img { padding: 10px; }
 .stock-badge { right: 8px; bottom: 8px; padding: 4px 9px; }
 .product-card-body {

@@ -29,6 +29,7 @@ type Variant = {
   imageUrl: string | null;
   priceCents: number;
   costCents?: number;
+  active: boolean;
   stock: number;
   mlRemaining: number | null;
   isBulk: boolean;
@@ -60,7 +61,7 @@ const APP_ROUTE_TITLES: Record<string, string> = {
   "/": "Point of sale",
   "/shift": "My shift",
   "/sales": "Sales and receipts",
-  "/stock": "Stock lookup",
+  "/stock": "Stock management",
   "/refunds": "Returns",
   "/admin": "Overview",
   "/admin/analysis": "Sales analysis",
@@ -972,7 +973,11 @@ function POSPage() {
                 .toLowerCase()
                 .includes(debouncedSearch.toLowerCase())),
         )
-        .flatMap((product) => product.variants.map((variant) => ({ product, variant }))),
+        .flatMap((product) =>
+          product.variants
+            .filter((variant) => variant.active !== false)
+            .map((variant) => ({ product, variant })),
+        ),
     [products, department, type, debouncedSearch],
   );
   const showTillSkeleton = useDelayedLoading(isPending || shiftPending);
@@ -2531,10 +2536,12 @@ function StatusPill({ value }: { value: string }) {
 
 function StockPage() {
   const user = useUser();
+  const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const { data, isPending } = useQuery({
-    queryKey: ["stock"],
+    queryKey: ["stock", "management"],
     queryFn: () =>
       api<{
         stock: {
@@ -2545,17 +2552,45 @@ function StockPage() {
             id: string;
             sku: string;
             barcode: string | null;
+            active: boolean;
             priceCents: number;
             costCents?: number;
-            product: { name: string };
+            isTester: boolean;
+            isBulk: boolean;
+            parentBulkVariantId: string | null;
+            mlPerUnit: number | null;
+            product: {
+              id: string;
+              name: string;
+              active: boolean;
+              productType: { code: string };
+            };
           };
         }[];
-      }>("/stock"),
+      }>("/stock?includeEmpty=true"),
   });
-  const showLoading = useDelayedLoading(isPending);
+  const catalogQuery = useQuery({
+    queryKey: ["catalog"],
+    queryFn: () => api<Catalog>("/catalog"),
+  });
+  const showLoading = useDelayedLoading(isPending || catalogQuery.isPending);
   const [variantId, setVariantId] = useState("");
   const [delta, setDelta] = useState("");
   const [stockReason, setStockReason] = useState("");
+  const [restockVariant, setRestockVariant] = useState<{
+    id: string;
+    quantity: number;
+    mlRemaining: number | null;
+    variant: {
+      id: string;
+      sku: string;
+      isBulk: boolean;
+      product: { id: string; name: string };
+    };
+  } | null>(null);
+  const [restockQuantity, setRestockQuantity] = useState("1");
+  const [restockMl, setRestockMl] = useState("0");
+  const [restockReason, setRestockReason] = useState("");
   const client = useQueryClient();
   const adjustment = useMutation({
     mutationFn: () =>
@@ -2574,21 +2609,109 @@ function StockPage() {
       void client.invalidateQueries({ queryKey: ["stock"] });
     },
   });
-  if (isPending) return showLoading ? <TableSkeleton /> : <div className="loading-reserve" aria-hidden="true" />;
-  const rows = (data?.stock ?? []).filter(({ variant }) =>
+  const restock = useMutation({
+    mutationFn: () => {
+      if (!restockVariant) throw new Error("Choose a product to restock.");
+      const quantityDelta = Number(restockQuantity) || 0;
+      const mlDelta = Number(restockMl) || 0;
+      if (restockVariant.variant.isBulk) {
+        if (quantityDelta < 0 || mlDelta < 0 || (quantityDelta === 0 && mlDelta === 0))
+          throw new Error("Enter a positive bottle quantity or volume to restore.");
+        if (quantityDelta > 0 && mlDelta === 0)
+          throw new Error("Enter the millilitres for the new bottle quantity.");
+        if (restockVariant.quantity + quantityDelta === 0 && mlDelta > 0)
+          throw new Error("Add at least one bottle when restoring bulk volume.");
+      } else if (quantityDelta <= 0) {
+        throw new Error("Enter a positive quantity to restore.");
+      }
+      return api("/stock/movements", {
+        method: "POST",
+        body: JSON.stringify({
+          movements: [
+            {
+              variantId: restockVariant.variant.id,
+              type: "adjustment",
+              quantityDelta,
+              ...(restockVariant.variant.isBulk ? { mlDelta } : {}),
+              reason: restockReason,
+            },
+          ],
+        }),
+      });
+    },
+    onSuccess: () => {
+      setFeedback("Stock restored and recorded in the stock ledger.");
+      setRestockVariant(null);
+      setRestockQuantity("1");
+      setRestockMl("0");
+      setRestockReason("");
+      void client.invalidateQueries({ queryKey: ["stock"] });
+      void client.invalidateQueries({ queryKey: ["catalog"] });
+    },
+  });
+  const restoreProduct = useMutation({
+    mutationFn: async (variantId: string) => {
+      const row = data?.stock.find((item) => item.variant.id === variantId);
+      if (!row) throw new Error("Product could not be found. Refresh the stock list.");
+      if (!row.variant.product.active)
+        await api(`/catalog/products/${row.variant.product.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ active: true }),
+        });
+      if (!row.variant.active)
+        await api(`/catalog/variants/${row.variant.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ active: true }),
+        });
+    },
+    onSuccess: () => {
+      setFeedback("Product restored and available for POS sales.");
+      void client.invalidateQueries({ queryKey: ["stock"] });
+      void client.invalidateQueries({ queryKey: ["catalog"] });
+    },
+  });
+  if (isPending || catalogQuery.isPending)
+    return showLoading ? <TableSkeleton /> : <div className="loading-reserve" aria-hidden="true" />;
+
+  const inventory = data?.stock ?? [];
+  const availableQuantity = (row: (typeof inventory)[number]) => {
+    if (row.variant.isBulk)
+      return row.quantity > 0 && (row.mlRemaining ?? 0) > 0 ? row.quantity : 0;
+    const product = catalogQuery.data?.products.find((item) => item.id === row.variant.product.id);
+    const variant = product?.variants.find((item) => item.id === row.variant.id);
+    return product && variant && catalogQuery.data
+      ? availableUnits(catalogQuery.data, product, variant)
+      : row.quantity;
+  };
+  const inactive = (row: (typeof inventory)[number]) =>
+    !row.variant.active || !row.variant.product.active;
+  const searchedRows = inventory.filter(({ variant }) =>
     `${variant.product.name} ${variant.sku} ${variant.barcode ?? ""}`
       .toLowerCase()
       .includes(search.toLowerCase()),
   );
+  const rows = searchedRows.filter((row) => {
+    if (statusFilter === "inactive") return inactive(row);
+    if (statusFilter === "out-of-stock") return !inactive(row) && availableQuantity(row) === 0;
+    if (statusFilter === "in-stock") return !inactive(row) && availableQuantity(row) > 0;
+    return true;
+  });
+  const adjustmentRows = searchedRows.filter((row) => {
+    const isBundle = ["gift-sets", "gift_sets"].includes(
+      row.variant.product.productType.code.toLowerCase(),
+    );
+    return !row.variant.parentBulkVariantId && !isBundle;
+  });
   return (
     <>
       <PageHeader
         eyebrow="INVENTORY"
-        title="Stock lookup"
-        detail="On-hand quantity and remaining bulk volume across the catalog."
+        title="Stock management"
+        detail="Review stock, edit product details, restore inactive items, and restock out-of-stock products."
       />
       {feedback && <Notice tone="success">{feedback}</Notice>}
-      <div className="toolbar">
+      <FormError value={restoreProduct.error} />
+      <div className="toolbar stock-toolbar">
         <div className="search-wrap search-wrap-light">
           <span>Find</span>
           <input
@@ -2597,6 +2720,14 @@ function StockPage() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        <Field label="Show">
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="all">All products</option>
+            <option value="in-stock">In stock</option>
+            <option value="out-of-stock">Out of stock</option>
+            {user.role === "admin" && <option value="inactive">Inactive</option>}
+          </select>
+        </Field>
         <span className="result-count">{rows.length} variants</span>
       </div>
       <section className="surface table-surface">
@@ -2608,21 +2739,75 @@ function StockPage() {
             "Bulk volume",
             "Price",
             ...(user.role === "admin" ? ["Cost"] : []),
+            ...(user.role === "admin" ? ["Status", "Actions"] : ["Status"]),
           ]}
           empty="No stock rows found."
-          rows={rows.map(({ variant, quantity, mlRemaining }) => [
-            <>
-              <b>{variant.product.name}</b>
-            </>,
-            <>
-              {variant.sku}
-              <small className="table-subline">{variant.barcode ?? "No barcode"}</small>
-            </>,
-            <StatusPill value={quantity > 0 ? `${quantity} units` : "out of stock"} />,
-            mlRemaining === null ? "—" : `${mlRemaining} ml`,
-            money(variant.priceCents),
-            ...(user.role === "admin" ? [money(variant.costCents ?? 0)] : []),
-          ])}
+          rows={rows.map((row) => {
+            const { variant, mlRemaining } = row;
+            const inactiveRow = inactive(row);
+            const stockAvailable = availableQuantity(row);
+            const isBundle = ["gift-sets", "gift_sets"].includes(
+              variant.product.productType.code.toLowerCase(),
+            );
+            const canRestock = !variant.isTester && !variant.parentBulkVariantId && !isBundle;
+            return [
+              <>
+                <b>{variant.product.name}</b>
+              </>,
+              <>
+                {variant.sku}
+                <small className="table-subline">{variant.barcode ?? "No barcode"}</small>
+              </>,
+              stockAvailable,
+              mlRemaining === null ? "—" : `${mlRemaining} ml`,
+              money(variant.priceCents),
+              ...(user.role === "admin" ? [money(variant.costCents ?? 0)] : []),
+              <StatusPill
+                value={inactiveRow ? "inactive" : stockAvailable > 0 ? "in stock" : "out of stock"}
+              />,
+              ...(user.role === "admin"
+                ? [
+                    <div className="stock-actions">
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() =>
+                          navigate(
+                            `/admin/catalog?edit=${encodeURIComponent(variant.product.id)}&variant=${encodeURIComponent(variant.id)}`,
+                          )
+                        }
+                      >
+                        Edit
+                      </button>
+                      {inactiveRow && !variant.isTester && (
+                        <button
+                          type="button"
+                          className="button"
+                          disabled={restoreProduct.isPending}
+                          onClick={() => restoreProduct.mutate(variant.id)}
+                        >
+                          Restore
+                        </button>
+                      )}
+                      {canRestock && (
+                        <button
+                          type="button"
+                          className="button"
+                          onClick={() => {
+                            setRestockVariant(row);
+                            setRestockQuantity(variant.isBulk ? "0" : "1");
+                            setRestockMl("0");
+                            setRestockReason("Stock restored from inventory management");
+                          }}
+                        >
+                          Restock
+                        </button>
+                      )}
+                    </div>,
+                  ]
+                : []),
+            ];
+          })}
         />
       </section>
       {user.role === "admin" && (
@@ -2641,7 +2826,7 @@ function StockPage() {
               <Field label="Variant">
                 <select value={variantId} onChange={(e) => setVariantId(e.target.value)} required>
                   <option value="">Choose a product</option>
-                  {rows.map(({ variant }) => (
+                  {adjustmentRows.map(({ variant }) => (
                     <option key={variant.id} value={variant.id}>
                       {variant.product.name} · {variant.sku}
                     </option>
@@ -2670,6 +2855,91 @@ function StockPage() {
           </section>
           <DamagedStockPanel />
         </>
+      )}
+      {restockVariant && (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="stock-restock-title"
+          >
+            <button
+              type="button"
+              className="modal-close"
+              aria-label="Close restock form"
+              onClick={() => setRestockVariant(null)}
+            >
+              <Icon name="x" />
+            </button>
+            <p className="eyebrow">INVENTORY</p>
+            <h2 id="stock-restock-title">Restore stock</h2>
+            <p className="muted">
+              {restockVariant.variant.product.name} · {restockVariant.variant.sku}
+            </p>
+            <form
+              className="stack-form"
+              inert={restock.isPending || undefined}
+              onSubmit={(event) => {
+                event.preventDefault();
+                restock.mutate();
+              }}
+            >
+              {restockVariant.variant.isBulk ? (
+                <>
+                  <Field label="Bottles added">
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={restockQuantity}
+                      onChange={(event) => setRestockQuantity(event.target.value)}
+                    />
+                  </Field>
+                  <Field label="Millilitres added">
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={restockMl}
+                      onChange={(event) => setRestockMl(event.target.value)}
+                    />
+                  </Field>
+                </>
+              ) : (
+                <Field label="Units to restore">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={restockQuantity}
+                    onChange={(event) => setRestockQuantity(event.target.value)}
+                    required
+                  />
+                </Field>
+              )}
+              <Field label="Reason">
+                <input
+                  value={restockReason}
+                  onChange={(event) => setRestockReason(event.target.value)}
+                  maxLength={500}
+                  required
+                />
+              </Field>
+              <FormError value={restock.error} />
+              <div className="action-row">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => setRestockVariant(null)}
+                >
+                  Cancel
+                </button>
+                <Button loading={restock.isPending}>Save restock</Button>
+              </div>
+            </form>
+          </section>
+        </div>
       )}
     </>
   );
@@ -4025,6 +4295,8 @@ function DocumentSettingsPage() {
 }
 
 function CatalogAdminPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { data, isPending } = useQuery({
     queryKey: ["catalog"],
     queryFn: () => api<Catalog>("/catalog"),
@@ -4064,8 +4336,8 @@ function CatalogAdminPage() {
     return created.id;
   }
 
-  function startEditing(product: Product) {
-    const variant = product.variants[0];
+  function startEditing(product: Product, variantId?: string) {
+    const variant = product.variants.find((row) => row.id === variantId) ?? product.variants[0];
     setEditingProduct(product);
     setEditName(product.name);
     setEditBrandName(product.brand?.name ?? "");
@@ -4075,6 +4347,11 @@ function CatalogAdminPage() {
     setEditPrice(variant ? currencyInput(variant.priceCents) : "");
     setEditCost(variant ? currencyInput(variant.costCents ?? 0) : "");
     setEditAttributes(JSON.stringify(variant?.attributes ?? {}, null, 2));
+  }
+
+  function closeEditing() {
+    setEditingProduct(null);
+    if (location.search) navigate("/admin/catalog", { replace: true });
   }
 
   function selectEditingVariant(variantId: string) {
@@ -4182,10 +4459,19 @@ function CatalogAdminPage() {
     onSuccess: () => {
       setMessage("Product details updated.");
       setEditingProduct(null);
+      navigate("/admin/catalog", { replace: true });
       void client.invalidateQueries({ queryKey: ["catalog"] });
       void client.invalidateQueries({ queryKey: ["stock"] });
     },
   });
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const productId = params.get("edit");
+    if (!productId || !data || editingProduct?.id === productId) return;
+    const product = data.products.find((row) => row.id === productId);
+    if (product) startEditing(product, params.get("variant") ?? undefined);
+  }, [data, editingProduct?.id, location.search, startEditing]);
 
   if (isPending) return showLoading ? <FormSkeleton /> : <div className="loading-reserve" aria-hidden="true" />;
   return (
@@ -4308,7 +4594,7 @@ function CatalogAdminPage() {
       {editingProduct && (
         <div className="modal-backdrop" role="presentation">
           <section className="modal-card catalog-edit-modal" role="dialog" aria-modal="true" aria-labelledby="catalog-edit-title">
-            <button type="button" className="modal-close" aria-label="Close" onClick={() => setEditingProduct(null)}>
+            <button type="button" className="modal-close" aria-label="Close" onClick={closeEditing}>
               <Icon name="x" />
             </button>
             <p className="eyebrow">CATALOG</p>
@@ -4361,7 +4647,7 @@ function CatalogAdminPage() {
               )}
               <FormError value={updateProduct.error} />
               <div className="action-row">
-                <button type="button" className="button button-secondary" onClick={() => setEditingProduct(null)}>Cancel</button>
+                <button type="button" className="button button-secondary" onClick={closeEditing}>Cancel</button>
                 <Button loading={updateProduct.isPending}>Save changes</Button>
               </div>
             </form>

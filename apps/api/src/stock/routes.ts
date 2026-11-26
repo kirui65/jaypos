@@ -175,25 +175,51 @@ stockRouter.get(
   "/",
   requirePermission("stock.read"),
   async (request: AuthenticatedRequest, response) => {
-    const levels = await prisma.stockLevel.findMany({
+    const variants = await prisma.productVariant.findMany({
       where: shopWhere(request, {}),
-      include: { variant: { include: { product: true } } },
-      orderBy: { updatedAt: "desc" },
+      include: {
+        product: { include: { productType: true } },
+        stockLevels: { where: shopWhere(request, {}) },
+      },
+      orderBy: { sku: "asc" },
     });
     const isAdmin = request.authUser!.role.name === "admin";
-    const stock = levels.map(({ variant, ...level }) => ({
-      ...level,
-      variant: {
-        id: variant.id,
-        sku: variant.sku,
-        barcode: variant.barcode,
-        attributes: variant.attributesJson,
-        priceCents: variant.priceCents,
-        ...(isAdmin ? { costCents: variant.costCents } : {}),
-        isTester: variant.isTester,
-        product: { id: variant.product.id, name: variant.product.name },
-      },
-    }));
+    const includeEmpty = request.query.includeEmpty === "true";
+    const stock = variants
+      .filter((variant) => isAdmin || (variant.active && variant.product.active))
+      .filter((variant) => includeEmpty || variant.stockLevels.length > 0)
+      .map((variant) => {
+        const level = variant.stockLevels[0];
+        return {
+          ...(level ?? {}),
+          id: level?.id ?? variant.id,
+          quantity: level?.quantity ?? 0,
+          mlRemaining: level?.mlRemaining ?? null,
+          variant: {
+            id: variant.id,
+            sku: variant.sku,
+            barcode: variant.barcode,
+            attributes: variant.attributesJson,
+            priceCents: variant.priceCents,
+            ...(isAdmin ? { costCents: variant.costCents } : {}),
+            isTester: variant.isTester,
+            isBulk: variant.isBulk,
+            parentBulkVariantId: variant.parentBulkVariantId,
+            mlPerUnit: variant.mlPerUnit,
+            active: variant.active,
+            product: {
+              id: variant.product.id,
+              name: variant.product.name,
+              active: variant.product.active,
+              productType: {
+                id: variant.product.productType.id,
+                name: variant.product.productType.name,
+                code: variant.product.productType.code,
+              },
+            },
+          },
+        };
+      });
     return response.json({ stock });
   },
 );

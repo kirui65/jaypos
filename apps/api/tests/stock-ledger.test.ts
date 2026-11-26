@@ -30,6 +30,24 @@ describe("stock ledger calculations", () => {
     ).toMatchObject({ quantityDelta: -2, quantity: 6 });
   });
 
+  it("restores an out-of-stock variant through a positive adjustment", () => {
+    expect(
+      calculateStockChange(
+        { quantity: 0, mlRemaining: null, costCents: 500 },
+        { ...line, type: "adjustment", quantityDelta: 4 },
+      ),
+    ).toMatchObject({ quantityDelta: 4, quantity: 4, mlRemaining: null });
+  });
+
+  it("restores bulk bottle quantity and remaining volume together", () => {
+    expect(
+      calculateStockChange(
+        { quantity: 0, mlRemaining: 0, costCents: 5000 },
+        { ...line, type: "adjustment", quantityDelta: 1, mlDelta: 100 },
+      ),
+    ).toMatchObject({ quantityDelta: 1, mlDelta: 100, quantity: 1, mlRemaining: 100 });
+  });
+
   it("rejects a stock operation that would make quantity negative", () => {
     expect(() =>
       calculateStockChange(

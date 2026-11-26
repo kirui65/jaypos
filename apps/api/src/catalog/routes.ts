@@ -88,6 +88,7 @@ const variantInput = z
     mlPerUnit: z.number().int().positive().nullable().optional(),
     isTesterAllowed: z.boolean().default(false),
     isTester: z.boolean().default(false),
+    active: z.boolean().optional(),
   })
   .strict();
 const productInput = z
@@ -163,6 +164,7 @@ type CatalogVariantRecord = {
   parentBulkVariantId: string | null;
   mlPerUnit: number | null;
   isTester: boolean;
+  active: boolean;
   stockLevels: { quantity: number; mlRemaining: number | null }[];
 };
 type CatalogProductRecord = {
@@ -199,6 +201,7 @@ export function publicProduct(product: CatalogProductRecord, admin: boolean) {
     bulkVolumeMl: variant.bulkVolumeMl,
     parentBulkVariantId: variant.parentBulkVariantId,
     mlPerUnit: variant.mlPerUnit,
+    active: variant.active,
     stock: variant.stockLevels[0]?.quantity ?? 0,
     mlRemaining: variant.stockLevels[0]?.mlRemaining ?? null,
   });
@@ -564,6 +567,7 @@ catalogRouter.post(
             mlPerUnit: item.mlPerUnit ?? null,
             isTesterAllowed: item.isTesterAllowed,
             isTester: item.isTester,
+            active: item.active ?? true,
           }),
         });
       await tx.auditLog.create({

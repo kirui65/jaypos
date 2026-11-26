@@ -2,6 +2,12 @@
 
 Last updated: 2026-11-26
 
+## Stock management editing and restoration (2026-11-26)
+
+- Stock management now includes zero-stock variants and lets admins filter in-stock, out-of-stock, and inactive items. Admin actions open the existing product editor for the selected variant, reactivate inactive products or variants, and restore quantity through an audited stock adjustment. Bulk products can restore bottle count and millilitres; bundles and decants remain tied to their component stock.
+- The default `/stock` response is preserved for other screens; only stock management requests empty variants. Staff continue to see active inventory without admin actions.
+- Checks: 56 tests passed and 4 database-dependent tests skipped; lint, typecheck, and production build passed. Focused Prettier check reports existing formatting drift in large application/API/style files; no unrelated reformatting was applied.
+
 ## POS payment, shift entry, and mobile polish (2026-11-26)
 
 - Added an audited cancel action for pending STK attempts. The POS keeps the cart available after cancellation, and late provider success is recorded as an unmatched payment for admin reconciliation. Lipwa's current API docs do not expose a server-side prompt cancellation endpoint, so staff are told to ask the customer to dismiss the prompt on their phone.
