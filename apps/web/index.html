@@ -19,8 +19,30 @@
         <section class="login-card" aria-labelledby="login-title">
           <p class="login-kicker">RETAIL POINT OF SALE</p>
           <h1 id="login-title">Sign in to the till</h1>
-          <p class="muted">Sign in to open your shop till.</p>
+          <p id="login-subtitle" class="muted">Sign in to manage stock, reports, and staff.</p>
           <form id="login-form" class="stack-form">
+            <div class="role-selector" role="radiogroup" aria-label="Sign-in role">
+              <button
+                type="button"
+                class="role-option role-option-active"
+                role="radio"
+                aria-checked="true"
+                data-role-option="admin"
+              >
+                <svg class="ej-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+                <span>Admin</span>
+              </button>
+              <button
+                type="button"
+                class="role-option"
+                role="radio"
+                aria-checked="false"
+                data-role-option="staff"
+              >
+                <svg class="ej-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg>
+                <span>Cashier</span>
+              </button>
+            </div>
             <label class="field">
               <span>Username or email</span>
               <input name="identifier" autocomplete="username" required />
@@ -30,7 +52,7 @@
               <input name="password" type="password" autocomplete="current-password" required />
             </label>
             <div id="login-error" class="notice notice-error" role="alert" hidden></div>
-            <button id="login-submit" class="button button-full button-lg">Sign in</button>
+            <button id="login-submit" class="button button-full button-lg">Sign in as Admin</button>
           </form>
         </section>
       </main>

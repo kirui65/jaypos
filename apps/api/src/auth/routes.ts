@@ -20,6 +20,7 @@ const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 const loginInput = z.object({
   identifier: z.string().trim().min(1).max(254),
   password: z.string().min(1).max(200),
+  role: z.enum(["admin", "staff"]).optional(),
 });
 const passwordInput = z.object({
   currentPassword: z.string().min(1).max(200).optional(),
@@ -148,6 +149,22 @@ authRouter.post("/login", async (request, response) => {
       }),
     });
     return response.status(401).json({ error: "Invalid username or password" });
+  }
+  if (parsed.data.role && user.role.name !== parsed.data.role) {
+    await prisma.auditLog.create({
+      data: businessData(shopId, {
+        userId: user.id,
+        action: "auth.login_role_mismatch",
+        entity: "user",
+        entityId: user.id,
+        ip: clientIp(request),
+        afterJson: { selectedRole: parsed.data.role, actualRole: user.role.name },
+      }),
+    });
+    const expectedLabel = user.role.name === "admin" ? "Admin" : "Cashier";
+    return response.status(403).json({
+      error: `This account is registered as ${expectedLabel}. Select ${expectedLabel} to sign in.`,
+    });
   }
   const token = sessionToken();
   const expiresAt = new Date(Date.now() + sessionLifetimeMs);

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, cents, currencyInput, money, shopDate, shopDateTime, shopTime } from "./api.js";
@@ -234,13 +234,14 @@ function FormError({ value }: { value: unknown }) {
 }
 
 function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: AppUser) => void }) {
+  const [role, setRole] = useState<"admin" | "staff">("admin");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const mutation = useMutation({
     mutationFn: () =>
       api<{ user: AppUser }>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ identifier, password }),
+        body: JSON.stringify({ identifier, password, role }),
       }),
     onSuccess: ({ user }) => onLogin(user),
   });
@@ -248,14 +249,52 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
     event.preventDefault();
     mutation.mutate();
   }
+  function selectRole(nextRole: "admin" | "staff") {
+    setRole(nextRole);
+    mutation.reset();
+  }
+  function onRoleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    const nextRole = role === "admin" ? "staff" : "admin";
+    selectRole(nextRole);
+    const buttons = event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+    buttons[nextRole === "admin" ? 0 : 1]?.focus();
+  }
   return (
     <main className="login-page">
       <section className="login-brand-panel">{brand.logoUrl && <img className="login-logo" src={brand.logoUrl} alt={`${brand.brandName} logo`} width={220} height={220} />}<div className="gold-rule" /><p>{brand.brandName}</p></section>
       <section className="login-card">
         <p className="login-kicker">RETAIL POINT OF SALE</p>
         <h1>Sign in to the till</h1>
-        <p className="muted">Sign in to open your {brand.brandName} till.</p>
+        <p className="muted">
+          {role === "admin"
+            ? `Sign in to manage ${brand.brandName} stock, reports, and staff.`
+            : `Sign in to open your ${brand.brandName} till.`}
+        </p>
         <form onSubmit={submit} className="stack-form" inert={mutation.isPending || undefined}>
+          <div className="role-selector" role="radiogroup" aria-label="Sign-in role" onKeyDown={onRoleKeyDown}>
+            <button
+              type="button"
+              className={`role-option ${role === "admin" ? "role-option-active" : ""}`}
+              role="radio"
+              aria-checked={role === "admin"}
+              onClick={() => selectRole("admin")}
+            >
+              <Icon name="shield" />
+              <span>Admin</span>
+            </button>
+            <button
+              type="button"
+              className={`role-option ${role === "staff" ? "role-option-active" : ""}`}
+              role="radio"
+              aria-checked={role === "staff"}
+              onClick={() => selectRole("staff")}
+            >
+              <Icon name="user" />
+              <span>Cashier</span>
+            </button>
+          </div>
           <Field label="Username or email">
             <input
               autoComplete="username"
@@ -276,7 +315,7 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
           </Field>
           <FormError value={mutation.error} />
           <Button className="button-full button-lg" loading={mutation.isPending}>
-            Sign in
+            {role === "admin" ? "Sign in as Admin" : "Sign in as Cashier"}
           </Button>
         </form>
       </section>

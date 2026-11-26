@@ -8,7 +8,29 @@ const root = document.getElementById("root")!;
 const form = document.getElementById("login-form") as HTMLFormElement;
 const errorBox = document.getElementById("login-error")!;
 const submitButton = document.getElementById("login-submit") as HTMLButtonElement;
+const subtitle = document.getElementById("login-subtitle");
+const roleButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-role-option]"));
+let selectedRole: "admin" | "staff" = "admin";
 let disposeLoginShader: (() => void) | undefined;
+
+function selectRole(role: "admin" | "staff") {
+  selectedRole = role;
+  for (const button of roleButtons) {
+    const active = button.dataset.roleOption === role;
+    button.setAttribute("aria-checked", String(active));
+    button.classList.toggle("role-option-active", active);
+  }
+  if (subtitle) {
+    subtitle.textContent =
+      role === "admin"
+        ? "Sign in to manage stock, reports, and staff."
+        : "Sign in to open the till and process sales.";
+  }
+  if (!submitButton.disabled) {
+    submitButton.textContent = role === "admin" ? "Sign in as Admin" : "Sign in as Cashier";
+  }
+  errorBox.hidden = true;
+}
 
 async function openShell() {
   document.body.classList.remove("public-login");
@@ -63,6 +85,22 @@ if (import.meta.env.DEV && window.location.pathname === "/design") {
     })
     .catch(() => undefined);
 
+  for (const [index, button] of roleButtons.entries()) {
+    button.addEventListener("click", () => {
+      const role = button.dataset.roleOption === "staff" ? "staff" : "admin";
+      selectRole(role);
+    });
+    button.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+      event.preventDefault();
+      const next = roleButtons[(index + 1) % roleButtons.length];
+      if (!next) return;
+      const role = next.dataset.roleOption === "staff" ? "staff" : "admin";
+      selectRole(role);
+      next.focus();
+    });
+  }
+
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     errorBox.hidden = true;
@@ -73,7 +111,11 @@ if (import.meta.env.DEV && window.location.pathname === "/design") {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ identifier: data.get("identifier"), password: data.get("password") }),
+      body: JSON.stringify({
+        identifier: data.get("identifier"),
+        password: data.get("password"),
+        role: selectedRole,
+      }),
     })
       .then(async (response) => {
         const body = await response.json().catch(() => ({}));
@@ -86,7 +128,7 @@ if (import.meta.env.DEV && window.location.pathname === "/design") {
       })
       .finally(() => {
         submitButton.disabled = false;
-        submitButton.textContent = "Sign in";
+        submitButton.textContent = selectedRole === "admin" ? "Sign in as Admin" : "Sign in as Cashier";
       });
   });
 }

@@ -53,8 +53,10 @@ const MIN_TARGET_PX = 44;
 
 fs.mkdirSync('audit/screenshots', { recursive: true });
 
-async function login(page: Page, creds: { user: string; pass: string }) {
+async function login(page: Page, creds: { user: string; pass: string }, role: 'admin' | 'staff' = 'admin') {
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  const roleButton = page.getByRole('radio', { name: role === 'admin' ? /admin/i : /cashier/i });
+  if (await roleButton.isVisible()) await roleButton.click();
   await page.getByLabel(/username|email/i).fill(creds.user);
   await page.getByLabel(/password/i).fill(creds.pass);
   await page.getByRole('button', { name: /sign in|log in|login/i }).click();
@@ -66,6 +68,47 @@ async function login(page: Page, creds: { user: string; pass: string }) {
 const slug = (route: string) => (route === '/' ? 'home' : route.replace(/\W+/g, '-').replace(/^-|-$/g, ''));
 
 test.describe.configure({ timeout: 60_000 });
+
+test('login role selector toggles between Admin and Cashier and submits selected role', async ({ page }) => {
+  await page.route('**/api/brand', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ brandName: 'Test Shop', logoUrl: '/logo.webp' }) }),
+  );
+  await page.route('**/api/auth/me', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
+  );
+  let submittedBody: { identifier?: string; password?: string; role?: string } | null = null;
+  await page.route('**/api/auth/login', async (route) => {
+    submittedBody = route.request().postDataJSON() as { identifier?: string; password?: string; role?: string };
+    await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'Role check reached' }) });
+  });
+
+  await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  const adminRadio = page.getByRole('radio', { name: 'Admin' });
+  const cashierRadio = page.getByRole('radio', { name: 'Cashier' });
+  await expect(adminRadio).toHaveAttribute('aria-checked', 'true');
+  await expect(cashierRadio).toHaveAttribute('aria-checked', 'false');
+  await expect(page.getByRole('button', { name: 'Sign in as Admin' })).toBeVisible();
+
+  await cashierRadio.click();
+  await expect(cashierRadio).toHaveAttribute('aria-checked', 'true');
+  await expect(adminRadio).toHaveAttribute('aria-checked', 'false');
+  await expect(page.getByRole('button', { name: 'Sign in as Cashier' })).toBeVisible();
+
+  await cashierRadio.press('ArrowLeft');
+  await expect(adminRadio).toHaveAttribute('aria-checked', 'true');
+  await adminRadio.press('ArrowRight');
+  await expect(cashierRadio).toHaveAttribute('aria-checked', 'true');
+
+  await page.getByLabel(/username|email/i).fill('cashier@shop.local');
+  await page.getByLabel(/password/i).fill('secret-pass-123');
+  await page.getByRole('button', { name: 'Sign in as Cashier' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Role check reached');
+  expect(submittedBody).toEqual({
+    identifier: 'cashier@shop.local',
+    password: 'secret-pass-123',
+    role: 'staff',
+  });
+});
 
 test('login shader respects device support and reduced motion', async ({ browser }) => {
   const standardContext = await browser.newContext();
@@ -162,7 +205,7 @@ for (const role of ['public', 'admin', 'staff'] as const) {
           page.on('requestfailed', (r) => problems.push(`request failed: ${r.url()}`));
           page.on('response', (r) => { if (r.status() >= 500) problems.push(`HTTP ${r.status()}: ${r.url()}`); });
 
-          if (role !== 'public') await login(page, CREDS[role as 'admin' | 'staff']);
+          if (role !== 'public') await login(page, CREDS[role as 'admin' | 'staff'], role as 'admin' | 'staff');
           if (role === 'public' || route !== '/') await page.goto(`${BASE}${route}`, { waitUntil: 'networkidle' });
 
           if (role !== 'public' && route === '/') {
