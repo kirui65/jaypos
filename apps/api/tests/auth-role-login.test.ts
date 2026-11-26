@@ -150,11 +150,21 @@ describe("POST /api/auth/login role selection", () => {
     expect(response.body.error).toBe("Invalid login details");
   });
 
-  it("requires an eight-digit numeric PIN for admin accounts", async () => {
+  it("allows login with an eight-digit admin PIN", async () => {
     mockUser("admin", await bcrypt.hash("12345678", 4));
     const response = await request(createApp())
       .post("/api/auth/login")
       .send({ identifier: "admin", pin: "12345678", role: "admin" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.user.role).toBe("admin");
+  });
+
+  it("keeps existing four-digit admin PINs valid during the upgrade", async () => {
+    mockUser("admin", await bcrypt.hash("2468", 4));
+    const response = await request(createApp())
+      .post("/api/auth/login")
+      .send({ identifier: "admin", pin: "2468", role: "admin" });
 
     expect(response.status).toBe(200);
     expect(response.body.user.role).toBe("admin");

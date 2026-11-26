@@ -116,8 +116,38 @@ describe("admin account management", () => {
     const audit = mockTransaction.auditLog.create.mock.calls[0]?.[0] as {
       data: { afterJson: Record<string, unknown> };
     };
-    expect(audit.data.afterJson).toEqual({ username: "newowner", passwordChanged: true });
+    expect(audit.data.afterJson).toEqual({
+      username: "newowner",
+      passwordChanged: true,
+      pinChanged: false,
+    });
     expect(JSON.stringify(audit)).not.toContain("a-strong-account-password");
+  });
+
+  it("lets an admin replace their sign-in PIN with an eight-digit PIN", async () => {
+    mockPrisma.user.findFirst.mockResolvedValueOnce(admin);
+    mockTransaction.user.update.mockImplementation(
+      async (input: { data: Record<string, unknown> }) => ({
+        ...admin,
+        ...input.data,
+      }),
+    );
+
+    const response = await request(createApp())
+      .patch("/api/auth/account")
+      .set("Cookie", "ej_session=valid-session")
+      .send({ newPin: "12345678" });
+
+    expect(response.status).toBe(200);
+    const update = mockTransaction.user.update.mock.calls[0]?.[0] as {
+      data: Record<string, unknown>;
+    };
+    expect(await bcrypt.compare("12345678", String(update.data.pinHash))).toBe(true);
+    const audit = mockTransaction.auditLog.create.mock.calls[0]?.[0] as {
+      data: { afterJson: Record<string, unknown> };
+    };
+    expect(audit.data.afterJson).toMatchObject({ pinChanged: true });
+    expect(JSON.stringify(audit)).not.toContain("12345678");
   });
 
   it("lets an admin edit a cashier username and password without clearing their PIN", async () => {

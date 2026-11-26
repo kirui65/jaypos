@@ -20,13 +20,16 @@ function resetPinInput() {
   credentialInput.value = "";
   const pinLength = ROLE_PIN_LENGTHS[selectedRole];
   if (credentialHint)
-    credentialHint.textContent = `Enter exactly ${pinLength} digits.`;
+    credentialHint.textContent =
+      selectedRole === "admin"
+        ? "Enter your saved admin PIN (4–8 digits). Update it to 8 digits in Account settings after signing in."
+        : `Enter exactly ${pinLength} digits.`;
   credentialInput.inputMode = "numeric";
-  credentialInput.pattern = `[0-9]{${pinLength}}`;
+  credentialInput.pattern = selectedRole === "admin" ? "[0-9]{4,8}" : `[0-9]{${pinLength}}`;
   credentialInput.minLength = 0;
   credentialInput.maxLength = pinLength;
-  credentialInput.minLength = pinLength;
-  credentialInput.placeholder = `Enter your ${pinLength}-digit PIN`;
+  credentialInput.minLength = selectedRole === "admin" ? 4 : pinLength;
+  credentialInput.placeholder = selectedRole === "admin" ? "Enter your admin PIN" : `Enter your ${pinLength}-digit PIN`;
 }
 
 function selectRole(role: "admin" | "staff") {

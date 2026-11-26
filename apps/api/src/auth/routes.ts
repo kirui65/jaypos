@@ -71,9 +71,15 @@ const accountSettingsInput = z
       .regex(/^[a-zA-Z0-9._@+-]+$/)
       .optional(),
     newPassword: z.string().min(12).max(200).optional(),
+    newPin: z.string().regex(new RegExp(`^[0-9]{${ROLE_PIN_LENGTHS.admin}}$`)).optional(),
   })
   .strict()
-  .refine((value) => value.username !== undefined || value.newPassword !== undefined);
+  .refine(
+    (value) =>
+      value.username !== undefined ||
+      value.newPassword !== undefined ||
+      value.newPin !== undefined,
+  );
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -83,6 +89,9 @@ function sessionToken(): string {
 }
 function clientIp(request: AuthenticatedRequest): string {
   return request.ip || "unknown";
+}
+function isAcceptedSignInPin(pin: string, role: string): boolean {
+  return role === "admin" ? /^\d{4,8}$/.test(pin) : isRolePin(pin, role);
 }
 function safeUser(user: {
   id: string;
@@ -154,7 +163,7 @@ authRouter.post("/login", async (request, response) => {
     !user.archivedAt &&
     Boolean(
       user.pinHash &&
-        isRolePin(parsed.data.pin, user.role.name) &&
+        isAcceptedSignInPin(parsed.data.pin, user.role.name) &&
         (await bcrypt.compare(parsed.data.pin, user.pinHash)),
     );
   await prisma.loginAttempt.create({
@@ -252,7 +261,7 @@ authRouter.post("/pin-unlock", async (request: AuthenticatedRequest, response) =
   const parsed = z.object({ pin: z.string().regex(/^\d{4,8}$/) }).safeParse(request.body);
   if (!parsed.success || !request.authUser)
     return response.status(400).json({ error: "Invalid PIN" });
-  if (!isRolePin(parsed.data.pin, request.authUser.role.name))
+  if (!isAcceptedSignInPin(parsed.data.pin, request.authUser.role.name))
     return response.status(400).json({
       error: `PIN must contain exactly ${rolePinLength(request.authUser.role.name)} digits`,
     });
@@ -322,7 +331,7 @@ authRouter.post("/pin", async (request: AuthenticatedRequest, response) => {
   });
   if (
     !isRolePin(parsed.data.pin, request.authUser.role.name) ||
-    (parsed.data.currentPin && !isRolePin(parsed.data.currentPin, request.authUser.role.name))
+    (parsed.data.currentPin && !isAcceptedSignInPin(parsed.data.currentPin, request.authUser.role.name))
   )
     return response.status(400).json({
       error: `PIN must contain exactly ${rolePinLength(request.authUser.role.name)} digits`,
@@ -355,7 +364,9 @@ const adminOnly = requirePermission("staff.manage");
 authRouter.patch("/account", adminOnly, async (request: AuthenticatedRequest, response) => {
   const parsed = accountSettingsInput.safeParse(request.body);
   if (!parsed.success || !request.authUser)
-    return response.status(400).json({ error: "Provide a valid username or a password of at least 12 characters" });
+    return response.status(400).json({
+      error: "Provide a valid username, a password of at least 12 characters, or an 8-digit PIN",
+    });
   const actor = request.authUser;
   if (actor.role.name !== "admin") return response.status(403).json({ error: "Permission denied" });
   const existing = await prisma.user.findFirst({
@@ -374,6 +385,7 @@ authRouter.patch("/account", adminOnly, async (request: AuthenticatedRequest, re
     if (duplicate) return response.status(409).json({ error: "Username is already in use" });
   }
   const passwordChanged = parsed.data.newPassword !== undefined;
+  const pinChanged = parsed.data.newPin !== undefined;
   const updated = await prisma.$transaction(async (transaction) => {
     const saved = await transaction.user.update({
       where: shopWhere(request, { id: existing.id }),
@@ -382,6 +394,7 @@ authRouter.patch("/account", adminOnly, async (request: AuthenticatedRequest, re
         ...(parsed.data.newPassword
           ? { passwordHash: await bcrypt.hash(parsed.data.newPassword, 12) }
           : {}),
+        ...(parsed.data.newPin ? { pinHash: await bcrypt.hash(parsed.data.newPin, 12) } : {}),
         mustChangePassword: false,
       },
       include: { role: true },
@@ -401,7 +414,7 @@ authRouter.patch("/account", adminOnly, async (request: AuthenticatedRequest, re
         entity: "user",
         entityId: saved.id,
         beforeJson: { username: existing.username },
-        afterJson: { username: saved.username, passwordChanged },
+        afterJson: { username: saved.username, passwordChanged, pinChanged },
       }),
     });
     return saved;

@@ -295,3 +295,10 @@ The web app requires an available PostgreSQL database and seeded shop/admin data
 - Updated typography tokens and alignment for page headings, dialogs, forms, and tables; standard POS screens use a consistent sans-serif hierarchy.
 - **TODO(spec):** eTIMS transmission and tax configuration remain unimplemented; see `docs/DECISIONS.md`.
 - Checks: typecheck, lint, tests (34), and production build passed. Backend invoice renderer files are formatted. `format:check` reports pre-existing formatting differences in the large frontend files; unrelated areas were left untouched.
+
+## Post-M8 — Admin PIN compatibility (2026-11-27)
+
+- Restored admin sign-in with existing numeric PINs from 4–8 digits so accounts created before the eight-digit rule can get back in. Cashier PINs remain exactly 4 digits, and new or changed admin PINs remain exactly 8 digits.
+- Admins can replace their own sign-in PIN with an eight-digit PIN from Staff → Account settings. Existing PINs also work for till unlock and as the current PIN when changing it.
+- Updated the login form guidance, API regression coverage, and the account-settings audit test. No credentials are stored in source or audit records.
+- Checks: `corepack pnpm run test -- --maxWorkers=1` — 70 passed, 4 database-dependent tests skipped; `corepack pnpm lint`, `corepack pnpm typecheck`, and `corepack pnpm build` passed. Focused browser login test passed. `corepack pnpm format:check` still reports formatting drift in 46 files across the repository; unrelated files were left untouched.

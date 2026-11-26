@@ -505,7 +505,14 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
               required
             />
           </Field>
-          <Field label="PIN" hint={`Enter exactly ${pinLength} digits.`}>
+          <Field
+            label="PIN"
+            hint={
+              role === "admin"
+                ? "Enter your saved admin PIN (4–8 digits). Update it to 8 digits in Account settings after signing in."
+                : `Enter exactly ${pinLength} digits.`
+            }
+          >
             <input
               type="password"
               name="pin"
@@ -513,10 +520,10 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
               data-lpignore="true"
               data-1p-ignore="true"
               inputMode="numeric"
-              pattern={`[0-9]{${pinLength}}`}
-              minLength={pinLength}
+              pattern={role === "admin" ? "[0-9]{4,8}" : `[0-9]{${pinLength}}`}
+              minLength={role === "admin" ? 4 : pinLength}
               maxLength={pinLength}
-              placeholder={`Enter your ${pinLength}-digit PIN`}
+              placeholder={role === "admin" ? "Enter your admin PIN" : `Enter your ${pinLength}-digit PIN`}
               value={pin}
               onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, pinLength))}
               required
@@ -3957,6 +3964,7 @@ function StaffAdminPage() {
   const [message, setMessage] = useState("");
   const [accountUsername, setAccountUsername] = useState(user.username);
   const [accountPassword, setAccountPassword] = useState("");
+  const [accountPin, setAccountPin] = useState("");
   const [editingStaff, setEditingStaff] = useState<AppUser | null>(null);
   const [staffUsername, setStaffUsername] = useState("");
   const [staffPassword, setStaffPassword] = useState("");
@@ -3993,11 +4001,13 @@ function StaffAdminPage() {
         body: JSON.stringify({
           username: accountUsername.trim(),
           ...(accountPassword ? { newPassword: accountPassword } : {}),
+          ...(accountPin ? { newPin: accountPin } : {}),
         }),
       }),
     onSuccess: ({ user: updated }) => {
       setAccountUsername(updated.username);
       setAccountPassword("");
+      setAccountPin("");
       setMessage("Admin account settings updated.");
       client.setQueryData(["me"], { user: updated });
     },
@@ -4056,6 +4066,18 @@ function StaffAdminPage() {
               minLength={12}
               value={accountPassword}
               onChange={(event) => setAccountPassword(event.target.value)}
+            />
+          </Field>
+          <Field label="New admin sign-in PIN" hint="Optional. Leave blank to keep the current PIN. Use exactly 8 digits.">
+            <input
+              type="password"
+              autoComplete="new-password"
+              inputMode="numeric"
+              pattern="[0-9]{8}"
+              minLength={8}
+              maxLength={8}
+              value={accountPin}
+              onChange={(event) => setAccountPin(event.target.value.replace(/\D/g, "").slice(0, 8))}
             />
           </Field>
           <Button loading={updateOwnAccount.isPending}>Save admin account</Button>
