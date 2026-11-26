@@ -47,6 +47,20 @@ shiftsRouter.get(
   },
 );
 
+shiftsRouter.get(
+  "/recent",
+  requirePermission("sales.read.all"),
+  async (request: AuthenticatedRequest, response) => {
+    const shifts = await prisma.shift.findMany({
+      where: shopWhere(request, {}),
+      include: { seller: { select: { id: true, name: true } } },
+      orderBy: { openedAt: "desc" },
+      take: 10,
+    });
+    return response.json({ shifts });
+  },
+);
+
 shiftsRouter.post(
   "/open",
   requirePermission("sales.create"),
@@ -155,7 +169,7 @@ shiftsRouter.post(
           where: shopWhere(request, { sellerId, closedAt: null }),
         });
         if (!shift) return null;
-        const [cashPayments, manualMpesaPayments, cardPayments, cashMovements] = await Promise.all([
+        const [cashPayments, manualMpesaPayments, cardPayments, bankPayments, cashMovements] = await Promise.all([
           tx.payment.aggregate({
             where: shopWhere(request, {
               shopId,
@@ -177,6 +191,15 @@ shiftsRouter.post(
             where: shopWhere(request, {
               shopId,
               method: PaymentMethod.card,
+              sale: { shiftId: shift.id, status: SaleStatus.completed },
+            }),
+            _sum: { amountCents: true },
+          }),
+          tx.payment.aggregate({
+            where: shopWhere(request, {
+              shopId,
+              method: PaymentMethod.bank,
+              status: PaymentStatus.paid,
               sale: { shiftId: shift.id, status: SaleStatus.completed },
             }),
             _sum: { amountCents: true },
@@ -236,6 +259,7 @@ shiftsRouter.post(
             varianceCents,
             mpesaManualCents: manualMpesaPayments._sum?.amountCents ?? 0,
             cardCents: cardPayments._sum?.amountCents ?? 0,
+            bankCents: bankPayments._sum?.amountCents ?? 0,
           },
         };
       },

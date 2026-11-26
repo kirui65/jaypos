@@ -6,11 +6,12 @@ import { requirePermission, type AuthenticatedRequest } from "../auth/middleware
 import { normalizeKenyanPhone } from "@eminent/shared";
 import { prisma } from "../db.js";
 import { deductSaleStock } from "../sales/inventory.js";
-import { businessData, businessWhere, sessionShopId, shopWhere } from "../tenant-scope.js";
+import { businessData, businessWhere, sessionShopId, shopData, shopWhere } from "../tenant-scope.js";
 import { configuredShopId } from "../shop-settings.js";
 import {
   getPaymentProvider,
   MockPaymentProvider,
+  resolveCancelledAttemptStatus,
   type PaymentProvider,
   type PaymentSnapshot,
 } from "./provider.js";
@@ -70,6 +71,11 @@ async function applyProviderSnapshot(
   if (initial.status === PaymentStatus.paid) return { found: true as const, status: "paid" };
   if (initial.status === PaymentStatus.unmatched)
     return { found: true as const, status: "unmatched" };
+  if (initial.status === PaymentStatus.cancelled)
+    return {
+      found: true as const,
+      status: resolveCancelledAttemptStatus(snapshot.status),
+    };
   if (snapshot.status === "pending") return { found: true as const, status: "pending" };
   const rawJson = {
     notification: notification ?? null,
@@ -82,6 +88,8 @@ async function applyProviderSnapshot(
         include: { sale: true },
       });
       if (payment.status === PaymentStatus.paid) return { status: "paid" as const };
+      if (payment.status === PaymentStatus.cancelled)
+        return { status: resolveCancelledAttemptStatus(snapshot.status) };
       if (snapshot.status === "failed") {
         if (payment.status !== PaymentStatus.failed) {
           const failed = await tx.payment.update({
@@ -379,7 +387,13 @@ export function createPaymentsRouter(provider: PaymentProvider = getPaymentProvi
             : getPaymentProvider(payment.provider ?? undefined);
         const snapshot = await selectedProvider.queryStatus(payment.providerRequestId);
         let result = await applyProviderSnapshot(payment.id, sessionShopId(request), snapshot);
-        if (snapshot.status === "pending" && Date.now() - payment.updatedAt.getTime() >= 90_000) {
+        if (result.status === "unmatched")
+          await recordOrphanPayment(selectedProvider, payment.providerRequestId, snapshot);
+        if (
+          payment.status === PaymentStatus.pending &&
+          snapshot.status === "pending" &&
+          Date.now() - payment.updatedAt.getTime() >= 90_000
+        ) {
           await prisma.payment.updateMany({
             where: shopWhere(request, { id: payment.id, status: PaymentStatus.pending }),
             data: { status: PaymentStatus.expired },
@@ -390,6 +404,72 @@ export function createPaymentsRouter(provider: PaymentProvider = getPaymentProvi
       } catch {
         return response.status(502).json({ error: "Payment status could not be checked" });
       }
+    },
+  );
+
+  router.post(
+    "/:id/cancel",
+    requirePermission("sales.create"),
+    async (request: AuthenticatedRequest, response) => {
+      if (!z.string().uuid().safeParse(request.params.id).success)
+        return response.status(400).json({ error: "Invalid payment id" });
+      const user = request.authUser!;
+      const result = await prisma.$transaction(
+        async (tx) => {
+          const payment = await tx.payment.findFirst({
+            where: shopWhere(request, {
+              id: request.params.id!,
+              method: PaymentMethod.mpesa_stk,
+            }),
+            include: { sale: true },
+          });
+          if (!payment) return { status: "missing" as const };
+          if (!canAccessPayment(user, payment.sale.sellerId))
+            return { status: "forbidden" as const };
+          if (payment.sale.status !== SaleStatus.draft)
+            return { status: "sale_closed" as const };
+          if (payment.status === PaymentStatus.cancelled)
+            return { status: "cancelled" as const };
+          if (
+            ![PaymentStatus.pending, PaymentStatus.failed, PaymentStatus.expired].some(
+              (status) => status === payment.status,
+            )
+          )
+            return { status: "not_cancellable" as const };
+          const updated = await tx.payment.updateMany({
+            where: shopWhere(request, {
+              id: payment.id,
+              status: payment.status,
+            }),
+            data: { status: PaymentStatus.cancelled },
+          });
+          if (!updated.count) return { status: "changed" as const };
+          await tx.auditLog.create({
+            data: shopData(request, {
+              userId: user.id,
+              action: "payment.stk_cancelled",
+              entity: "payment",
+              entityId: payment.id,
+              beforeJson: { status: payment.status },
+              afterJson: {
+                status: PaymentStatus.cancelled,
+                providerRequestId: payment.providerRequestId,
+                sellerId: payment.sale.sellerId,
+              },
+              ip: request.ip ?? null,
+            }),
+          });
+          return { status: "cancelled" as const };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+      if (result.status === "missing") return response.status(404).json({ error: "STK payment not found" });
+      if (result.status === "forbidden") return response.status(403).json({ error: "Permission denied" });
+      if (result.status === "sale_closed")
+        return response.status(409).json({ error: "Sale is no longer awaiting STK payment" });
+      if (result.status === "not_cancellable" || result.status === "changed")
+        return response.status(409).json({ error: "This STK payment can no longer be cancelled" });
+      return response.json({ paymentId: request.params.id, status: "cancelled" });
     },
   );
 
@@ -446,7 +526,9 @@ export function createPaymentsRouter(provider: PaymentProvider = getPaymentProvi
       const payments = await prisma.payment.findMany({
         where: shopWhere(request, {
           method: PaymentMethod.mpesa_stk,
-          status: { in: [PaymentStatus.pending, PaymentStatus.expired, PaymentStatus.failed] },
+          status: {
+            in: [PaymentStatus.pending, PaymentStatus.expired, PaymentStatus.failed, PaymentStatus.cancelled],
+          },
           sale: { ...(all ? {} : { sellerId: user.id }) },
         }),
         select: {

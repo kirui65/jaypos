@@ -2,6 +2,15 @@
 
 Last updated: 2026-11-26
 
+## POS payment, shift entry, and mobile polish (2026-11-26)
+
+- Added an audited cancel action for pending STK attempts. The POS keeps the cart available after cancellation, and late provider success is recorded as an unmatched payment for admin reconciliation. Lipwa's current API docs do not expose a server-side prompt cancellation endpoint, so staff are told to ask the customer to dismiss the prompt on their phone.
+- Added bank transfer as a payment method, with an optional transaction reference, cash-plus-bank split payments, receipt/invoice reference output, and bank totals in shift close summaries. Added Prisma migration `20261126170000_bank_payment_method`; it has not been applied to a hosted database.
+- Authenticated app startup opens the shift screen for both roles and routes through shift setup before other pages when no shift is active. Opening is recorded in the existing shift and audit records. The admin dashboard now shows recent shift openings, staff names, local opening times, opening floats, and active status.
+- Fixed production catalog photo URLs to use the same API base as normal API requests, added variant-image fallback, and reveal the product placeholder when an image fails. New products remain visible in POS when out of stock.
+- Added subtle raised 3D styling to POS product cards and adjusted the phone layout so the cart sheet clears the bottom tabs and product cards remain scrollable and usable.
+- Checks: Prisma client generation, typecheck, lint, production build, and all available tests passed (54 passed, 4 database-dependent tests skipped). `format:check` still reports repository style differences across 45 files; no broad reformat was applied.
+
 ## Left-side navigation refinement (2026-11-26)
 
 - Moved the desktop route links into a grouped vertical sidebar on the left. The main header now holds the current page title, connectivity, shift, and user controls.

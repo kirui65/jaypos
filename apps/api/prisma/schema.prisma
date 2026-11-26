@@ -31,6 +31,7 @@ enum SaleStatus {
 
 enum PaymentMethod {
   cash
+  bank
   mpesa_stk
   mpesa_manual
   card
@@ -554,6 +555,7 @@ model Payment {
   status             PaymentStatus @default(pending)
   amountCents        Int           @map("amount_cents")
   phone              String?
+  bankReference      String?       @map("bank_reference")
   provider           String?
   providerRequestId  String?       @map("provider_request_id")
   mpesaReceipt       String?       @map("mpesa_receipt")

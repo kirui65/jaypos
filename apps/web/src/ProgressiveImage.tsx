@@ -15,16 +15,19 @@ export function ProgressiveImage({
   className?: string;
   crossOrigin?: "anonymous" | "use-credentials";
 }) {
-  const [loaded, setLoaded] = useState(false);
+  const [loadedSource, setLoadedSource] = useState("");
+  const [failedSource, setFailedSource] = useState("");
+  if (failedSource === src) return null;
   return (
-    <img src={src} alt={alt}
+    <img key={src} src={src} alt={alt}
       width={width}
       height={height}
       crossOrigin={crossOrigin}
       loading="lazy"
       decoding="async"
-      className={`${className} progressive-image ${loaded ? "image-loaded" : ""}`}
-      onLoad={() => setLoaded(true)}
+      className={`${className} progressive-image ${loadedSource === src ? "image-loaded" : ""}`}
+      onLoad={() => setLoadedSource(src)}
+      onError={() => setFailedSource(src)}
     />
   );
 }

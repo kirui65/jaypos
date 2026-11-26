@@ -12,7 +12,7 @@ type InvoiceSale = {
     lineTotalCents: number;
     variant: { sku: string; product: { name: string } };
   }[];
-  payments: { method: string; status: string; amountCents: number }[];
+  payments: { method: string; status: string; amountCents: number; bankReference?: string | null }[];
   subtotalCents: number;
   discountCents: number;
   taxCents: number;
@@ -80,7 +80,7 @@ export function renderInvoiceHtml({
   const payments = sale.payments
     .map(
       (payment) => `<li>
-        <span>${escapeHtml(payment.method.replaceAll("_", " "))} · ${escapeHtml(payment.status.replaceAll("_", " "))}</span>
+        <span>${escapeHtml(payment.method.replaceAll("_", " "))} · ${escapeHtml(payment.status.replaceAll("_", " "))}${payment.bankReference ? ` · Ref ${escapeHtml(payment.bankReference)}` : ""}</span>
         <strong>${money(payment.amountCents)}</strong>
       </li>`,
     )

@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 export type ProviderStatus = "pending" | "paid" | "failed";
+export type CancelledAttemptStatus = "cancelled" | "unmatched";
+
+export function resolveCancelledAttemptStatus(status: ProviderStatus): CancelledAttemptStatus {
+  return status === "paid" ? "unmatched" : "cancelled";
+}
+
 export type PaymentSnapshot = {
   status: ProviderStatus;
   amountCents: number | null;

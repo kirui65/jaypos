@@ -54,6 +54,13 @@ const saleInput = z
             .strict(),
           z
             .object({
+              method: z.literal("bank"),
+              amountCents: z.number().int().positive(),
+              bankReference: z.string().trim().max(80).optional(),
+            })
+            .strict(),
+          z
+            .object({
               method: z.literal("mpesa_stk"),
               amountCents: z.number().int().positive(),
               phone: z.string().trim().min(1).max(32),
@@ -218,6 +225,9 @@ function paymentPlan(payments: z.infer<typeof saleInput>["payments"], totalCents
           : PaymentStatus.paid,
     amountCents: payment.appliedCents,
     ...(payment.method === "mpesa_manual" ? { mpesaReceipt: payment.mpesaReceipt } : {}),
+    ...(payment.method === "bank" && payment.bankReference
+      ? { bankReference: payment.bankReference }
+      : {}),
     ...(payment.method === "mpesa_stk"
       ? { phone: payment.phone, provider: process.env.PAYMENT_PROVIDER ?? "mock" }
       : {}),
@@ -1521,7 +1531,7 @@ salesRouter.get(
         customer: { select: { name: true, phone: true, email: true } },
         seller: { select: { name: true } },
         items: { include: { variant: { include: { product: true } } } },
-        payments: { select: { method: true, status: true, amountCents: true } },
+        payments: { select: { method: true, status: true, amountCents: true, bankReference: true } },
       },
     });
     if (!sale || (sale.sellerId !== user.id && !canAccess(user, "sales.read.all")))
@@ -1687,7 +1697,7 @@ salesRouter.get(
     doc.font("Helvetica").fontSize(9).fillColor(muted);
     for (const payment of sale.payments) {
       doc.text(
-        `${payment.method.replaceAll("_", " ")} · ${payment.status.replaceAll("_", " ")} · ${money(payment.amountCents)}`,
+        `${payment.method.replaceAll("_", " ")} · ${payment.status.replaceAll("_", " ")} · ${money(payment.amountCents)}${payment.bankReference ? ` · Ref ${payment.bankReference}` : ""}`,
       );
     }
     if (invoiceTerms) {
@@ -1791,7 +1801,7 @@ salesRouter.get(
       doc.moveDown().text("Payments");
       for (const payment of sale.payments)
         doc.text(
-          `${payment.method} ${payment.status}: ${money(payment.amountCents)}${payment.mpesaReceipt ? ` (${payment.mpesaReceipt})` : ""}`,
+          `${payment.method} ${payment.status}: ${money(payment.amountCents)}${payment.mpesaReceipt ? ` (${payment.mpesaReceipt})` : payment.bankReference ? ` (ref ${payment.bankReference})` : ""}`,
         );
       doc.moveDown().fontSize(9).text(receiptFooter, { align: "center" });
       doc.end();
@@ -1804,7 +1814,7 @@ salesRouter.get(
     response
       .type("html")
       .send(
-        `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Receipt ${esc(sale.receiptNo ?? "")}</title><style>@page{size:${thermalWidth}mm auto;margin:3mm}body{font:12px monospace;color:#000;width:calc(${thermalWidth}mm - 6mm);margin:auto}header{text-align:center;font-weight:bold;font-size:16px}hr{border:0;border-top:1px dashed #000}.row{display:flex;justify-content:space-between;gap:8px}.copy{text-align:center;font-weight:bold}.total{font-weight:bold;font-size:14px}@media print{button{display:none}}</style></head><body><header>${esc(brandName)}</header><p class="copy">COPY</p><center>${esc(address)}<br>${esc(phone)}<br>${kraPin ? `KRA PIN: ${esc(kraPin)}` : ""}</center><hr>Receipt: ${esc(sale.receiptNo ?? "—")}<br>${esc(time)}<br>Served by: ${esc(sale.seller.name)}${sale.customer ? `<br>Customer: ${esc(sale.customer.name ?? "Customer")}${sale.customer.phone ? ` · ${esc(sale.customer.phone)}` : ""}` : ""}<hr>${lines.map((line) => `<div>${esc(line)}</div>`).join("")}<hr><div class="row"><span>Subtotal</span><span>${money(sale.subtotalCents)}</span></div><div class="row"><span>Discount</span><span>${money(sale.discountCents)}</span></div><div class="row"><span>Tax</span><span>${money(sale.taxCents)}</span></div><div class="row total"><span>Total</span><span>${money(sale.totalCents)}</span></div><div class="row"><span>Paid</span><span>${money(sale.paidCents)}</span></div><hr>${sale.payments.map((payment) => `<div>${esc(payment.method)} ${esc(payment.status)} ${money(payment.amountCents)} ${payment.mpesaReceipt ? esc(payment.mpesaReceipt) : ""}</div>`).join("")}<p style="text-align:center">${esc(receiptFooter)}</p><button onclick="print()">Print</button></body></html>`,
+        `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Receipt ${esc(sale.receiptNo ?? "")}</title><style>@page{size:${thermalWidth}mm auto;margin:3mm}body{font:12px monospace;color:#000;width:calc(${thermalWidth}mm - 6mm);margin:auto}header{text-align:center;font-weight:bold;font-size:16px}hr{border:0;border-top:1px dashed #000}.row{display:flex;justify-content:space-between;gap:8px}.copy{text-align:center;font-weight:bold}.total{font-weight:bold;font-size:14px}@media print{button{display:none}}</style></head><body><header>${esc(brandName)}</header><p class="copy">COPY</p><center>${esc(address)}<br>${esc(phone)}<br>${kraPin ? `KRA PIN: ${esc(kraPin)}` : ""}</center><hr>Receipt: ${esc(sale.receiptNo ?? "—")}<br>${esc(time)}<br>Served by: ${esc(sale.seller.name)}${sale.customer ? `<br>Customer: ${esc(sale.customer.name ?? "Customer")}${sale.customer.phone ? ` · ${esc(sale.customer.phone)}` : ""}` : ""}<hr>${lines.map((line) => `<div>${esc(line)}</div>`).join("")}<hr><div class="row"><span>Subtotal</span><span>${money(sale.subtotalCents)}</span></div><div class="row"><span>Discount</span><span>${money(sale.discountCents)}</span></div><div class="row"><span>Tax</span><span>${money(sale.taxCents)}</span></div><div class="row total"><span>Total</span><span>${money(sale.totalCents)}</span></div><div class="row"><span>Paid</span><span>${money(sale.paidCents)}</span></div><hr>${sale.payments.map((payment) => `<div>${esc(payment.method)} ${esc(payment.status)} ${money(payment.amountCents)} ${payment.mpesaReceipt ? esc(payment.mpesaReceipt) : payment.bankReference ? `Ref ${esc(payment.bankReference)}` : ""}</div>`).join("")}<p style="text-align:center">${esc(receiptFooter)}</p><button onclick="print()">Print</button></body></html>`,
       );
   },
 );

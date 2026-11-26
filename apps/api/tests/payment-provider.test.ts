@@ -1,7 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { LipwaProvider, MockPaymentProvider } from "../src/payments/provider.js";
+import {
+  LipwaProvider,
+  MockPaymentProvider,
+  resolveCancelledAttemptStatus,
+} from "../src/payments/provider.js";
 
 describe("Lipwa payment adapter", () => {
+  it("does not complete an STK attempt after cancellation and flags late payment", () => {
+    expect(resolveCancelledAttemptStatus("pending")).toBe("cancelled");
+    expect(resolveCancelledAttemptStatus("failed")).toBe("cancelled");
+    expect(resolveCancelledAttemptStatus("paid")).toBe("unmatched");
+  });
+
   it("sends the documented STK request and converts KES to cents", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(

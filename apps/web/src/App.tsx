@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, cents, currencyInput, money, shopDate, shopDateTime, shopTime } from "./api.js";
 import { Icon } from "./Icons.js";
@@ -26,6 +26,7 @@ type Variant = {
   sku: string;
   barcode: string | null;
   attributes: Record<string, unknown>;
+  imageUrl: string | null;
   priceCents: number;
   costCents?: number;
   stock: number;
@@ -110,7 +111,13 @@ type Sale = {
     lineTotalCents: number;
     variant: { id: string; sku: string; product: { name: string } };
   }[];
-  payments: { id: string; method: string; status: string; mpesaReceipt?: string | null }[];
+  payments: {
+    id: string;
+    method: string;
+    status: string;
+    mpesaReceipt?: string | null;
+    bankReference?: string | null;
+  }[];
 };
 type OwnerSummary = {
   today: {
@@ -669,8 +676,11 @@ function PageNotFound() {
 
 function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => void }) {
   const user = useUser();
-  const pathname = useLocation().pathname;
+  const location = useLocation();
+  const pathname = location.pathname;
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const initialRouteHandled = useRef(false);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -679,6 +689,11 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
     queryKey: ["current-shift"],
     queryFn: () => api<{ shift: { id: string } | null }>("/shifts/current"),
   });
+  useEffect(() => {
+    if (initialRouteHandled.current) return;
+    initialRouteHandled.current = true;
+    if (pathname !== "/shift") navigate("/shift", { replace: true });
+  }, [navigate, pathname]);
   useEffect(() => {
     const onOnline = () => setOnline(true);
     const onOffline = () => setOnline(false);
@@ -795,7 +810,9 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
         </header>
         <main className="content">
           <RouteProgress />
-          <Routes>
+          {shiftState && !shiftState.shift && pathname !== "/shift" ? (
+            <Navigate to="/shift" replace />
+          ) : <Routes>
             <Route path="/" element={<POSPage />} />
             <Route path="/shift" element={<ShiftPage />} />
             <Route path="/sales" element={<SalesPage />} />
@@ -843,7 +860,7 @@ function AppShell({ brand, onLogout }: { brand: BrandSettings; onLogout: () => v
               }
             />
             <Route path="*" element={<PageNotFound />} />
-          </Routes>
+          </Routes>}
         </main>
       </div>
       <nav className="mobile-tabbar" aria-label="Quick navigation">
@@ -929,9 +946,12 @@ function POSPage() {
   const searchRef = useRef<HTMLInputElement>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
-  const [method, setMethod] = useState<"cash" | "mpesa_stk" | "split">("cash");
+  const [method, setMethod] = useState<"cash" | "bank" | "mpesa_stk" | "split">("cash");
+  const [splitMethod, setSplitMethod] = useState<"bank" | "mpesa_stk">("mpesa_stk");
   const [tender, setTender] = useState("");
   const [phone, setPhone] = useState("");
+  const [bankReference, setBankReference] = useState("");
+  const [paymentNotice, setPaymentNotice] = useState("");
   const [invoiceBuyerName, setInvoiceBuyerName] = useState("");
   const [invoiceBuyerPhone, setInvoiceBuyerPhone] = useState("");
   const [invoiceBuyerEmail, setInvoiceBuyerEmail] = useState("");
@@ -1009,15 +1029,24 @@ function POSPage() {
   const saleMutation = useMutation({
     mutationFn: async () => {
       const cashCents = cents(tender || currencyInput(total));
+      const bankPart = {
+        method: "bank",
+        amountCents: total - cashCents,
+        ...(bankReference.trim() ? { bankReference: bankReference.trim() } : {}),
+      };
       const payments =
         method === "cash"
           ? [{ method: "cash", amountCents: cashCents }]
           : method === "mpesa_stk"
             ? [{ method: "mpesa_stk", amountCents: total, phone }]
-            : [
-                { method: "cash", amountCents: cashCents },
-                { method: "mpesa_stk", amountCents: total - cashCents, phone },
-              ];
+            : method === "bank"
+              ? [{ method: "bank", amountCents: total, ...(bankReference.trim() ? { bankReference: bankReference.trim() } : {}) }]
+              : [
+                  { method: "cash", amountCents: cashCents },
+                  splitMethod === "mpesa_stk"
+                    ? { method: "mpesa_stk", amountCents: total - cashCents, phone }
+                    : bankPart,
+                ];
       const result = await api<{ sale: Sale }>("/sales", {
         method: "POST",
         body: JSON.stringify({
@@ -1038,10 +1067,10 @@ function POSPage() {
           payments,
         }),
       });
-      return { result, method };
+      return { result, method, splitMethod };
     },
-    onSuccess: async ({ result, method: paidBy }) => {
-      if (paidBy !== "cash") {
+    onSuccess: async ({ result, method: paidBy, splitMethod: splitPaidBy }) => {
+      if (paidBy === "mpesa_stk" || (paidBy === "split" && splitPaidBy === "mpesa_stk")) {
         const payment = result.sale.payments.find((row) => row.method === "mpesa_stk");
         if (!payment) throw new Error("The STK payment record was not returned");
         setActivePaymentId(payment.id);
@@ -1054,6 +1083,7 @@ function POSPage() {
         setCart([]);
         setPayOpen(false);
         setTender("");
+        setBankReference("");
         setInvoiceBuyerName("");
         setInvoiceBuyerPhone("");
         setInvoiceBuyerEmail("");
@@ -1099,6 +1129,22 @@ function POSPage() {
       refresh();
     },
   });
+  const cancelStkMutation = useMutation({
+    mutationFn: () =>
+      api(`/payments/${activePaymentId}/cancel`, { method: "POST", body: "{}" }),
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: ["payment-check", activePaymentId] });
+      setPaymentNotice(
+        "The payment attempt is cancelled in the POS. Ask the customer to dismiss the prompt on their phone. A late payment will go to admin review.",
+      );
+      setPayOpen(false);
+      setActivePaymentId("");
+      setStkInitiated(false);
+      setReceiptSale(null);
+      saleMutation.reset();
+      refresh();
+    },
+  });
   function addToCart(product: Product, variant: Variant) {
     setCart((current) => {
       const found = current.find((row) => row.variant.id === variant.id);
@@ -1140,6 +1186,11 @@ function POSPage() {
     <div className="pos-page">
       <div className="pos-layout">
         <section className="product-browser">
+          {paymentNotice && (
+            <Notice tone="info">
+              {paymentNotice}
+            </Notice>
+          )}
           <div className="search-wrap">
             <Icon name="search" />
             <input
@@ -1191,18 +1242,18 @@ function POSPage() {
                   data-testid="product-card"
                 >
                   <button className="product-card-main" disabled={available <= inCart} onClick={() => addToCart(product, variant)} aria-label={`Add ${product.name}`}>
-                    <div className={`product-art product-art-${product.productType.code.toLowerCase()}`}>
-                      <span className="product-placeholder" aria-hidden={product.imageUrl ? "true" : undefined}>
+                  <div className={`product-art product-art-${product.productType.code.toLowerCase()}`}>
+                      <span className="product-placeholder" aria-hidden={product.imageUrl || variant.imageUrl ? "true" : undefined}>
                         <Icon className="product-type-icon" name={productTypeIcon(product.productType.code)} />
                         <small>{product.name}</small>
                       </span>
-                      {product.imageUrl && (
+                      {(variant.imageUrl || product.imageUrl) && (
                         <ProgressiveImage
-                          src={resolveCatalogImage(product.imageUrl)}
+                          src={resolveCatalogImage(variant.imageUrl || product.imageUrl!)}
                           alt={`${product.name}`}
                           width={240}
                           height={240}
-                          {...(product.imageUrl.startsWith("/api/")
+                          {...((variant.imageUrl || product.imageUrl)!.startsWith("/api/")
                             ? { crossOrigin: "use-credentials" as const }
                             : {})}
                         />
@@ -1515,6 +1566,13 @@ function POSPage() {
                           : "Waiting for customer"}
                   </div>
                 )}
+                {stkInitiated &&
+                  paymentStatus.data?.status !== "paid" &&
+                  paymentStatus.data?.status !== "unmatched" && (
+                    <p className="field-hint">
+                      Canceling here stops this POS attempt. Ask the customer to dismiss the prompt on their phone.
+                    </p>
+                  )}
                 {stkInitiated && (
                   <button
                     className="text-button payment-check"
@@ -1571,8 +1629,18 @@ function POSPage() {
                     Done
                   </Button>
                 )}
+                {paymentStatus.data?.status !== "paid" &&
+                  paymentStatus.data?.status !== "unmatched" && (
+                    <button
+                      className="button button-secondary button-full payment-cancel"
+                      disabled={cancelStkMutation.isPending}
+                      onClick={() => cancelStkMutation.mutate()}
+                    >
+                      {cancelStkMutation.isPending ? "Cancelling attempt…" : "Cancel payment attempt"}
+                    </button>
+                  )}
                 <FormError
-                  value={paymentStatus.error ?? mockComplete.error ?? saleMutation.error}
+                  value={cancelStkMutation.error ?? paymentStatus.error ?? mockComplete.error ?? saleMutation.error}
                 />
               </>
             ) : (
@@ -1734,6 +1802,14 @@ function POSPage() {
                     <small>Cash tendered</small>
                   </button>
                   <button
+                    className={`payment-method ${method === "bank" ? "payment-method-active" : ""}`}
+                    onClick={() => setMethod("bank")}
+                  >
+                    <Icon name="receipt" />
+                    <b>Bank</b>
+                    <small>Bank transfer</small>
+                  </button>
+                  <button
                     className={`payment-method ${method === "mpesa_stk" ? "payment-method-active" : ""}`}
                     onClick={() => setMethod("mpesa_stk")}
                   >
@@ -1750,10 +1826,21 @@ function POSPage() {
                   >
                     <Icon name="layout" />
                     <b>Split</b>
-                    <small>Cash + M-Pesa</small>
+                    <small>Cash + another method</small>
                   </button>
                 </div>
-                {method !== "mpesa_stk" && (
+                {method === "split" && (
+                  <Field label="Second payment method">
+                    <select
+                      value={splitMethod}
+                      onChange={(event) => setSplitMethod(event.target.value as "bank" | "mpesa_stk")}
+                    >
+                      <option value="mpesa_stk">M-Pesa STK</option>
+                      <option value="bank">Bank transfer</option>
+                    </select>
+                  </Field>
+                )}
+                {(method === "cash" || method === "split") && (
                   <Field
                     label={method === "split" ? "Cash contribution (KES)" : "Cash received (KES)"}
                   >
@@ -1767,7 +1854,7 @@ function POSPage() {
                     />
                   </Field>
                 )}
-                {method !== "cash" && (
+                {(method === "mpesa_stk" || (method === "split" && splitMethod === "mpesa_stk")) && (
                   <Field
                     label="Customer phone number"
                     hint="Use a Kenyan mobile number, e.g. 0712 345 678"
@@ -1781,13 +1868,27 @@ function POSPage() {
                     />
                   </Field>
                 )}
+                {(method === "bank" || (method === "split" && splitMethod === "bank")) && (
+                  <Field label="Bank transfer reference" hint="Optional transaction or confirmation code.">
+                    <input
+                      autoComplete="off"
+                      maxLength={80}
+                      placeholder="e.g. bank confirmation code"
+                      value={bankReference}
+                      onChange={(event) => setBankReference(event.target.value)}
+                    />
+                  </Field>
+                )}
                 {method === "cash" && cents(tender) > total && (
                   <Notice>Change due: {money(cents(tender) - total)}</Notice>
                 )}
                 {method === "split" && (
-                  <Notice>M-Pesa STK balance: {money(Math.max(0, total - cents(tender)))}</Notice>
+                  <Notice>
+                    {splitMethod === "mpesa_stk" ? "M-Pesa STK" : "Bank transfer"} balance: {money(Math.max(0, total - cents(tender)))}
+                  </Notice>
                 )}
                 {method === "split" &&
+                  splitMethod === "mpesa_stk" &&
                   total - cents(tender) > 0 &&
                   (total - cents(tender) < 1000 || (total - cents(tender)) % 100 !== 0) && (
                     <Notice tone="error">
@@ -1802,20 +1903,23 @@ function POSPage() {
                     !discountCanBePaid ||
                     (method === "cash" && cents(tender) < total) ||
                     !invoiceDetailsValid ||
-                    (method === "mpesa_stk" && !phone.trim()) ||
+                    ((method === "mpesa_stk" || (method === "split" && splitMethod === "mpesa_stk")) && !phone.trim()) ||
                     (method === "split" &&
                       (cents(tender) <= 0 ||
                         cents(tender) >= total ||
-                        !phone.trim() ||
-                        total - cents(tender) < 1000 ||
-                        (total - cents(tender)) % 100 !== 0))
+                        (splitMethod === "mpesa_stk" &&
+                          (!phone.trim() ||
+                            total - cents(tender) < 1000 ||
+                            (total - cents(tender)) % 100 !== 0))))
                   }
                   onClick={() => saleMutation.mutate()}
                 >
                   {method === "cash"
                       ? "Complete cash sale"
+                      : method === "bank"
+                        ? "Record bank payment"
                       : method === "split"
-                        ? "Pay cash + M-Pesa"
+                        ? `Pay cash + ${splitMethod === "mpesa_stk" ? "M-Pesa" : "bank transfer"}`
                         : "Send payment prompt"}
                 </Button>
               </>
@@ -1865,7 +1969,9 @@ async function printReceipt(saleId: string, format: "html" | "pdf" = "html") {
 
 function resolveCatalogImage(imageUrl: string) {
   if (!imageUrl.startsWith("/api/")) return imageUrl;
-  const base = (import.meta.env.VITE_API_URL ?? "http://localhost:3001").replace(/\/$/, "");
+  const base = (
+    import.meta.env.VITE_API_URL ?? (import.meta.env.PROD ? "" : "http://localhost:3001")
+  ).replace(/\/$/, "");
   return `${base}${imageUrl}`;
 }
 
@@ -1954,6 +2060,8 @@ async function encodeProductImage(file: File) {
 }
 
 function ShiftPage() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const refresh = useRefresh(["current-shift"]);
   const { data, isPending } = useQuery({
     queryKey: ["current-shift"],
@@ -1979,6 +2087,7 @@ function ShiftPage() {
     varianceCents: number;
     mpesaManualCents: number;
     cardCents: number;
+    bankCents: number;
   } | null>(null);
   const mutation = useMutation({
     mutationFn: (body: { path: string; data: unknown }) =>
@@ -1989,12 +2098,20 @@ function ShiftPage() {
           varianceCents: number;
           mpesaManualCents: number;
           cardCents: number;
+          bankCents: number;
         };
+        shift?: { id: string; openedAt: string; openingCashCents: number };
       }>(body.path, { method: "POST", body: JSON.stringify(body.data) }),
     onSuccess: (result, variables) => {
       if (variables.path === "/shifts/close" && result.totals) {
         setCloseSummary(result.totals);
         setMessage("Shift closed. Review your reconciliation summary.");
+      } else if (variables.path === "/shifts/open" && result.shift) {
+        queryClient.setQueryData<{ shift: { id: string } | null }>(["current-shift"], {
+          shift: result.shift,
+        });
+        setMessage("Shift opened. Your opening time and float have been recorded.");
+        navigate("/");
       } else setMessage("Shift updated successfully.");
       setAmount("");
       setCount("");
@@ -2027,7 +2144,7 @@ function ShiftPage() {
           <Metric
             label="Variance"
             value={money(closeSummary.varianceCents)}
-            detail={`M-Pesa ${money(closeSummary.mpesaManualCents)} · Card ${money(closeSummary.cardCents)}`}
+            detail={`M-Pesa ${money(closeSummary.mpesaManualCents)} · Bank ${money(closeSummary.bankCents)} · Card ${money(closeSummary.cardCents)}`}
           />
         </section>
       )}
@@ -2838,6 +2955,7 @@ function Sales3DChart({
 function paymentMethodName(method: string) {
   const names: Record<string, string> = {
     cash: "Cash",
+    bank: "Bank transfer",
     mpesa_stk: "M-Pesa STK",
     mpesa_manual: "Manual M-Pesa",
     card: "Card",
@@ -3008,6 +3126,20 @@ function DashboardPage() {
     queryKey: ["pending-payments"],
     queryFn: () => api<{ payments: { id: string }[] }>("/payments/pending?scope=all"),
   });
+  const { data: shiftActivity } = useQuery({
+    queryKey: ["shift-activity"],
+    queryFn: () =>
+      api<{
+        shifts: {
+          id: string;
+          openedAt: string;
+          closedAt: string | null;
+          openingCashCents: number;
+          seller: { id: string; name: string };
+        }[];
+      }>("/shifts/recent"),
+    refetchInterval: 30_000,
+  });
   const today = summary?.today;
   const days = (summary?.days ?? []).map((day) => ({
     date: new Date(`${day.date}T00:00:00+03:00`),
@@ -3075,7 +3207,28 @@ function DashboardPage() {
         <Metric
           label="Payments pending"
           value={String(pending?.payments.length ?? 0)}
-          detail="M-Pesa status checks"
+          detail="Pending, cancelled, or expired STK attempts"
+        />
+      </section>
+      <section className="surface table-surface section-spaced shift-activity-surface">
+        <div className="section-title-row">
+          <div>
+            <h2>Shift openings</h2>
+            <p className="muted">See who opened a till and when.</p>
+          </div>
+          <span className="status-pill">
+            {(shiftActivity?.shifts ?? []).filter((shift) => !shift.closedAt).length} open
+          </span>
+        </div>
+        <DataTable
+          headers={["Staff member", "Opened", "Opening float", "Status"]}
+          empty="No shifts have been opened yet."
+          rows={(shiftActivity?.shifts ?? []).map((shift) => [
+            shift.seller.name,
+            shopDateTime(shift.openedAt),
+            money(shift.openingCashCents),
+            <StatusPill value={shift.closedAt ? "closed" : "open now"} />,
+          ])}
         />
       </section>
       <section className="surface chart-surface section-spaced">

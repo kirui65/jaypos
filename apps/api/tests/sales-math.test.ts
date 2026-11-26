@@ -49,6 +49,22 @@ describe("sale calculations", () => {
     });
   });
 
+  it("allocates bank transfers in a split payment and preserves the bank reference", () => {
+    expect(
+      allocateSalePayments(
+        [
+          { method: "cash", amountCents: 5000 },
+          { method: "bank", amountCents: 2000, bankReference: "BANK-123" },
+        ],
+        6500,
+      ),
+    ).toMatchObject({
+      paidCents: 6500,
+      changeCents: 500,
+      applied: [{ appliedCents: 4500 }, { appliedCents: 2000, bankReference: "BANK-123" }],
+    });
+  });
+
   it("rejects underpayment and change that cannot come from cash", () => {
     expect(() => allocateSalePayments([{ method: "card", amountCents: 900 }], 1000)).toThrow(
       /cover/,
