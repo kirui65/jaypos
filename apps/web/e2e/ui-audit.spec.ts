@@ -71,7 +71,7 @@ test.describe.configure({ timeout: 60_000 });
 
 test('login role selector toggles between Admin and Cashier and submits selected role', async ({ page }) => {
   await page.route('**/api/brand', (route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ brandName: 'Test Shop', logoUrl: '/logo.webp' }) }),
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ brandName: 'Test Shop', logoUrl: null }) }),
   );
   await page.route('**/api/auth/me', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
@@ -83,6 +83,9 @@ test('login role selector toggles between Admin and Cashier and submits selected
   });
 
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+  await expect(page.locator('#login-logo')).toBeVisible();
+  await expect(page.locator('#login-logo')).toHaveAttribute('src', '/logo.png');
+  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
   const adminRadio = page.getByRole('radio', { name: 'Admin' });
   const cashierRadio = page.getByRole('radio', { name: 'Cashier' });
   await expect(adminRadio).toHaveAttribute('aria-checked', 'true');
@@ -120,7 +123,7 @@ test('login shader respects device support and reduced motion', async ({ browser
   await standardPage.route('**/api/brand', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ brandName: 'Test Shop', logoUrl: '/logo.webp' }),
+    body: JSON.stringify({ brandName: 'Test Shop', logoUrl: null }),
   }));
   await standardPage.route('**/api/auth/me', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await standardPage.goto(`${BASE}/`, { waitUntil: 'networkidle' });
@@ -149,7 +152,7 @@ test('login shader respects device support and reduced motion', async ({ browser
   await reducedPage.route('**/api/brand', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ brandName: 'Test Shop', logoUrl: '/logo.webp' }),
+    body: JSON.stringify({ brandName: 'Test Shop', logoUrl: null }),
   }));
   await reducedPage.route('**/api/auth/me', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
   await reducedPage.goto(`${BASE}/`, { waitUntil: 'networkidle' });
@@ -193,7 +196,7 @@ for (const role of ['public', 'admin', 'staff'] as const) {
               route.fulfill({
                 status: 200,
                 contentType: 'application/json',
-                body: JSON.stringify({ brandName: 'Test Shop', logoUrl: '/logo.webp' }),
+                body: JSON.stringify({ brandName: 'Test Shop', logoUrl: null }),
               }),
             );
             await page.route('**/api/auth/me', (route) =>

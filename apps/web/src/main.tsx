@@ -23,8 +23,8 @@ function selectRole(role: "admin" | "staff") {
   if (subtitle) {
     subtitle.textContent =
       role === "admin"
-        ? "Sign in to manage stock, reports, and staff."
-        : "Sign in to open the till and process sales.";
+        ? "Manage inventory, reports and staff."
+        : "Open the till and process sales.";
   }
   if (!submitButton.disabled) {
     submitButton.textContent = role === "admin" ? "Sign in as Admin" : "Sign in as Cashier";
@@ -71,7 +71,7 @@ if (import.meta.env.DEV && window.location.pathname === "/design") {
     .then(async (response) => response.ok ? response.json() as Promise<{ brandName?: string; logoUrl?: string | null }> : undefined)
     .then((brand) => {
       if (!brand) return;
-      const name = brand.brandName || "Shop";
+      const name = brand.brandName || "Eminent Jay";
       document.title = `${name} | Retail point of sale`;
       for (const node of document.querySelectorAll<HTMLElement>("[data-brand-name]")) node.textContent = name;
       const logo = document.querySelector<HTMLImageElement>("#login-logo");

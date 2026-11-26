@@ -29,9 +29,9 @@ async function main() {
     update: {},
     create: {
       slug: "main",
-      name: "Shop",
+      name: "Eminent Jay",
       settingsJson: {
-        brand_name: "Shop",
+        brand_name: "Eminent Jay",
         logo_url: "",
         address: "",
         phone: "",

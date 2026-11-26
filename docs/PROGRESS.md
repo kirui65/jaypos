@@ -2,6 +2,13 @@
 
 Last updated: 2026-11-26
 
+## Public login refinement (2026-11-26)
+
+- Added the supplied Eminent Jay logo as the public login and password-change fallback while keeping a configured shop logo in front when one exists.
+- Refined the sign-in hierarchy, Admin/Cashier selector, field labels, secure-access note, and responsive layout. The logo now keeps its wide wordmark proportions in a subtle framed panel; small screens can scroll instead of clipping the form.
+- Updated the default brand name to Eminent Jay for empty or generic seeded shop settings.
+- Checks: typecheck, lint, production build, and 44 tests passed; 4 database-dependent tests were skipped. The login role test, reduced-motion/accessibility check, and public page checks at phone, tablet, laptop, and desktop sizes passed. `format:check` still reports repository-wide formatting differences across 45 files; unrelated files were not reformatted.
+
 ## Customer profiles and sales analysis (2026-11-26)
 
 - Added shop-scoped customer create/edit/profile APIs with normalized Kenyan phone numbers, consent source/date tracking, preference profiles, lifetime spend after approved refunds, and recent purchase history. Customer writes are audited; duplicate phone numbers return a clear conflict response.

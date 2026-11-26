@@ -11,17 +11,22 @@
     <div id="root">
       <main class="login-page">
         <div class="login-backdrop" aria-hidden="true"></div>
-        <section class="login-brand-panel" aria-label="Shop branding">
-          <img id="login-logo" class="login-logo" alt="Shop logo" width="320" height="320" fetchpriority="high" hidden />
-          <div class="gold-rule"></div>
-          <p class="login-brand-name" data-brand-name>Shop</p>
+        <section class="login-brand-panel" aria-label="Eminent Jay branding">
+          <img id="login-logo" class="login-logo" src="/logo.png" alt="Eminent Jay logo" width="1600" height="600" fetchpriority="high" />
+          <div class="login-brand-copy">
+            <span class="gold-rule" aria-hidden="true"></span>
+            <p>Sales, stock and customer care in one place.</p>
+          </div>
         </section>
         <section class="login-card" aria-labelledby="login-title">
-          <p class="login-kicker">RETAIL POINT OF SALE</p>
-          <h1 id="login-title">Sign in to the till</h1>
-          <p id="login-subtitle" class="muted">Sign in to manage stock, reports, and staff.</p>
+          <header class="login-card-header">
+            <p class="login-kicker">SECURE SHOP ACCESS</p>
+            <h1 id="login-title">Welcome back</h1>
+            <p id="login-subtitle" class="muted">Manage inventory, reports and staff.</p>
+          </header>
           <form id="login-form" class="stack-form">
-            <div class="role-selector" role="radiogroup" aria-label="Sign-in role">
+            <p id="login-role-label" class="login-field-label">Sign in as</p>
+            <div class="role-selector" role="radiogroup" aria-labelledby="login-role-label">
               <button
                 type="button"
                 class="role-option role-option-active"
@@ -45,14 +50,15 @@
             </div>
             <label class="field">
               <span>Username or email</span>
-              <input name="identifier" autocomplete="username" required />
+              <input name="identifier" autocomplete="username" placeholder="Username or email" required />
             </label>
             <label class="field">
               <span>Password</span>
-              <input name="password" type="password" autocomplete="current-password" required />
+              <input name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required />
             </label>
             <div id="login-error" class="notice notice-error" role="alert" hidden></div>
             <button id="login-submit" class="button button-full button-lg">Sign in as Admin</button>
+            <p class="login-security-note">Access is limited to authorized team members.</p>
           </form>
         </section>
       </main>

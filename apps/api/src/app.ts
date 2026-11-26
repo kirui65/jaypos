@@ -97,9 +97,10 @@ export function createApp() {
     const settings = shop?.settingsJson && typeof shop.settingsJson === "object" && !Array.isArray(shop.settingsJson)
       ? shop.settingsJson as Record<string, unknown>
       : {};
+    const savedBrandName = typeof settings.brand_name === "string" ? settings.brand_name.trim() : "";
     response.setHeader("Cache-Control", "public, max-age=60");
     return response.json({
-      brandName: typeof settings.brand_name === "string" ? settings.brand_name : "Shop",
+      brandName: savedBrandName && savedBrandName !== "Shop" ? savedBrandName : "Eminent Jay",
       logoUrl: typeof settings.logo_url === "string" ? settings.logo_url : null,
     });
   });

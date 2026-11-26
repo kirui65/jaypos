@@ -9,7 +9,7 @@ const cacheHashedAssets: Plugin = {
       const path = (request.url ?? "").split("?", 1)[0] ?? "";
       if (/^\/assets\/[^/]+-[\da-f]{8,}\.(?:js|css|woff2?)$/i.test(path)) {
         response.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-      } else if (/^\/(?:fonts\/[^/]+\.(?:woff2?|ttf)|logo\.webp|favicon\.svg)$/i.test(path)) {
+      } else if (/^\/(?:fonts\/[^/]+\.(?:woff2?|ttf)|logo\.(?:png|webp)|favicon\.svg)$/i.test(path)) {
         response.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=604800");
       }
       next();

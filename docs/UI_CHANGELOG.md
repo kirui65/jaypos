@@ -1,5 +1,12 @@
 # UI changelog
 
+## 2026-11-26 — Professional login refresh
+
+- Used the provided Eminent Jay wordmark as the default on sign-in and password-change screens, with configured shop logos still taking precedence.
+- Reworked the login card hierarchy and role selector, clarified the form labels and access note, and framed the wide logo so it sits cleanly against the animated dark backdrop.
+- Made the form scrollable on short phone screens. Public login checks passed at 360×740, 1024×768, 1280×720, and 1366×768, including the logo, image, accessibility, and layout checks.
+- Screenshots: [phone](../audit/screenshots/public-phone-home.png), [desktop](../audit/screenshots/public-desktop-home.png).
+
 ## 2026-11-26 — Customer profiles and sales analysis
 
 - Added customer directory search, return-visit and marketing-consent summaries, profile details, purchase history, preference editing, and an audited create/update flow.

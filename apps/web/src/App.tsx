@@ -337,17 +337,31 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
   }
   return (
     <main className="login-page">
-      <section className="login-brand-panel">{brand.logoUrl && <img className="login-logo" src={brand.logoUrl} alt={`${brand.brandName} logo`} width={220} height={220} />}<div className="gold-rule" /><p>{brand.brandName}</p></section>
+      <section className="login-brand-panel" aria-label="Eminent Jay branding">
+        <img
+          className="login-logo"
+          src={brand.logoUrl || "/logo.png"}
+          alt={`${brand.brandName} logo`}
+          width={1600}
+          height={600}
+          fetchPriority="high"
+        />
+        <div className="login-brand-copy">
+          <span className="gold-rule" aria-hidden="true" />
+          <p>Sales, stock and customer care in one place.</p>
+        </div>
+      </section>
       <section className="login-card">
-        <p className="login-kicker">RETAIL POINT OF SALE</p>
-        <h1>Sign in to the till</h1>
-        <p className="muted">
-          {role === "admin"
-            ? `Sign in to manage ${brand.brandName} stock, reports, and staff.`
-            : `Sign in to open your ${brand.brandName} till.`}
-        </p>
+        <header className="login-card-header">
+          <p className="login-kicker">SECURE SHOP ACCESS</p>
+          <h1>Welcome back</h1>
+          <p className="muted">
+            {role === "admin" ? "Manage inventory, reports and staff." : "Open the till and process sales."}
+          </p>
+        </header>
         <form onSubmit={submit} className="stack-form" inert={mutation.isPending || undefined}>
-          <div className="role-selector" role="radiogroup" aria-label="Sign-in role" onKeyDown={onRoleKeyDown}>
+          <p id="login-role-label" className="login-field-label">Sign in as</p>
+          <div className="role-selector" role="radiogroup" aria-labelledby="login-role-label" onKeyDown={onRoleKeyDown}>
             <button
               type="button"
               className={`role-option ${role === "admin" ? "role-option-active" : ""}`}
@@ -373,6 +387,7 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
             <input
               autoComplete="username"
               autoFocus
+              placeholder="Username or email"
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               required
@@ -382,6 +397,7 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
             <input
               type="password"
               autoComplete="current-password"
+              placeholder="Enter your password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -391,6 +407,7 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
           <Button className="button-full button-lg" loading={mutation.isPending}>
             {role === "admin" ? "Sign in as Admin" : "Sign in as Cashier"}
           </Button>
+          <p className="login-security-note">Access is limited to authorized team members.</p>
         </form>
       </section>
     </main>
@@ -410,7 +427,20 @@ function PasswordChange({ brand, onDone }: { brand: BrandSettings; onDone: () =>
   });
   return (
     <main className="login-page">
-      <section className="login-brand-panel">{brand.logoUrl && <img className="login-logo" src={brand.logoUrl} alt={`${brand.brandName} logo`} width={220} height={220} />}<div className="gold-rule" /><p>{brand.brandName}</p></section>
+      <section className="login-brand-panel" aria-label="Eminent Jay branding">
+        <img
+          className="login-logo"
+          src={brand.logoUrl || "/logo.png"}
+          alt={`${brand.brandName} logo`}
+          width={1600}
+          height={600}
+          fetchPriority="high"
+        />
+        <div className="login-brand-copy">
+          <span className="gold-rule" aria-hidden="true" />
+          <p>Sales, stock and customer care in one place.</p>
+        </div>
+      </section>
       <section className="login-card">
         <h1>Set a new password</h1>
         <p className="muted">Use at least 12 characters to secure your account.</p>
@@ -3836,7 +3866,7 @@ export default function App() {
     staleTime: 60_000,
     retry: false,
   });
-  const brandSettings = brand ?? { brandName: "Shop", logoUrl: null };
+  const brandSettings = brand ?? { brandName: "Eminent Jay", logoUrl: null };
   const { data, isPending } = useQuery({
     queryKey: ["me"],
     queryFn: () => api<{ user: AppUser }>("/auth/me"),
