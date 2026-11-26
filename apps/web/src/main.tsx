@@ -1,5 +1,6 @@
 import "./tokens.css";
 import "./login.css";
+import { ROLE_PIN_LENGTHS } from "@eminent/shared";
 
 const API_URL = (
   import.meta.env.VITE_API_URL ?? (import.meta.env.PROD ? "" : "http://localhost:3001")
@@ -9,12 +10,28 @@ const form = document.getElementById("login-form") as HTMLFormElement;
 const errorBox = document.getElementById("login-error")!;
 const submitButton = document.getElementById("login-submit") as HTMLButtonElement;
 const subtitle = document.getElementById("login-subtitle");
+const credentialInput = document.getElementById("login-credential") as HTMLInputElement;
+const credentialHint = document.getElementById("login-credential-hint");
 const roleButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-role-option]"));
 let selectedRole: "admin" | "staff" = "admin";
 let disposeLoginShader: (() => void) | undefined;
 
+function resetPinInput() {
+  credentialInput.value = "";
+  const pinLength = ROLE_PIN_LENGTHS[selectedRole];
+  if (credentialHint)
+    credentialHint.textContent = `Enter exactly ${pinLength} digits.`;
+  credentialInput.inputMode = "numeric";
+  credentialInput.pattern = `[0-9]{${pinLength}}`;
+  credentialInput.minLength = 0;
+  credentialInput.maxLength = pinLength;
+  credentialInput.minLength = pinLength;
+  credentialInput.placeholder = `Enter your ${pinLength}-digit PIN`;
+}
+
 function selectRole(role: "admin" | "staff") {
   selectedRole = role;
+  resetPinInput();
   for (const button of roleButtons) {
     const active = button.dataset.roleOption === role;
     button.setAttribute("aria-checked", String(active));
@@ -31,6 +48,11 @@ function selectRole(role: "admin" | "staff") {
   }
   errorBox.hidden = true;
 }
+
+credentialInput.addEventListener("input", () => {
+  const pinLength = ROLE_PIN_LENGTHS[selectedRole];
+  credentialInput.value = credentialInput.value.replace(/\D/g, "").slice(0, pinLength);
+});
 
 async function openShell() {
   document.body.classList.remove("public-login");
@@ -85,21 +107,25 @@ if (import.meta.env.DEV && window.location.pathname === "/design") {
     })
     .catch(() => undefined);
 
-  for (const [index, button] of roleButtons.entries()) {
+  for (const button of roleButtons) {
     button.addEventListener("click", () => {
       const role = button.dataset.roleOption === "staff" ? "staff" : "admin";
       selectRole(role);
     });
-    button.addEventListener("keydown", (event) => {
-      if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
-      event.preventDefault();
-      const next = roleButtons[(index + 1) % roleButtons.length];
-      if (!next) return;
-      const role = next.dataset.roleOption === "staff" ? "staff" : "admin";
-      selectRole(role);
-      next.focus();
-    });
   }
+  document.querySelector(".role-selector")?.addEventListener("keydown", (event) => {
+    if (!(event instanceof KeyboardEvent) || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    const current = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("[data-role-option]");
+    const index = current ? roleButtons.indexOf(current) : -1;
+    if (index < 0 || roleButtons.length < 2) return;
+    event.preventDefault();
+    const direction = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
+    const next = roleButtons[(index + direction + roleButtons.length) % roleButtons.length];
+    if (!next) return;
+    const role = next.dataset.roleOption === "staff" ? "staff" : "admin";
+    selectRole(role);
+    next.focus();
+  });
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();

@@ -21,7 +21,6 @@ const staff: AuthUser = {
     ],
   },
   permissionOverridesJson: { "customers.write": false, "stock.write": true },
-  mustChangePassword: false,
 };
 
 describe("server permission evaluation", () => {

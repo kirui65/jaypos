@@ -53,9 +53,9 @@
               <input name="identifier" autocomplete="off" data-lpignore="true" data-1p-ignore="true" placeholder="Enter your username" required />
             </label>
             <label class="field">
-              <span>PIN</span>
-              <small>Use your temporary password once if you have not set a PIN yet.</small>
-              <input name="pin" type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" placeholder="Enter your PIN" required />
+              <span id="login-credential-label">PIN</span>
+              <small id="login-credential-hint">Enter exactly 8 digits.</small>
+              <input id="login-credential" name="pin" type="password" inputmode="numeric" pattern="[0-9]{8}" minlength="8" maxlength="8" autocomplete="new-password" data-lpignore="true" data-1p-ignore="true" placeholder="Enter your 8-digit PIN" required />
             </label>
             <div id="login-error" class="notice notice-error" role="alert" hidden></div>
             <button id="login-submit" class="button button-full button-lg">Sign in as Admin</button>

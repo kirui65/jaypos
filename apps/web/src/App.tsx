@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { MAX_DISCOUNT_PERCENT, ROLE_PIN_LENGTHS } from "@eminent/shared";
 import { api, cents, currencyInput, money, shopDate, shopDateTime, shopTime } from "./api.js";
 import { Icon } from "./Icons.js";
 import { CartPanelSkeleton, FormSkeleton, ProductGridSkeleton, TableSkeleton } from "./LoadingStates.js";
@@ -15,8 +16,6 @@ type AppUser = {
   username: string;
   role: "admin" | "staff";
   permissions: string[];
-  mustChangePassword: boolean;
-  hasPin: boolean;
   discountLimitPct: number;
   active?: boolean;
 };
@@ -421,6 +420,7 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
   const [role, setRole] = useState<"admin" | "staff">("admin");
   const [identifier, setIdentifier] = useState("");
   const [pin, setPin] = useState("");
+  const pinLength = ROLE_PIN_LENGTHS[role];
   const mutation = useMutation({
     mutationFn: () =>
       api<{ user: AppUser }>("/auth/login", {
@@ -435,6 +435,7 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
   }
   function selectRole(nextRole: "admin" | "staff") {
     setRole(nextRole);
+    setPin("");
     mutation.reset();
   }
   function onRoleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
@@ -504,16 +505,20 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
               required
             />
           </Field>
-          <Field label="PIN" hint="Use your temporary password once if you have not set a PIN yet.">
+          <Field label="PIN" hint={`Enter exactly ${pinLength} digits.`}>
             <input
               type="password"
               name="pin"
               autoComplete="new-password"
               data-lpignore="true"
               data-1p-ignore="true"
-              placeholder="Enter your 4–6 digit PIN"
+              inputMode="numeric"
+              pattern={`[0-9]{${pinLength}}`}
+              minLength={pinLength}
+              maxLength={pinLength}
+              placeholder={`Enter your ${pinLength}-digit PIN`}
               value={pin}
-              onChange={(e) => setPin(e.target.value)}
+              onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, pinLength))}
               required
             />
           </Field>
@@ -522,122 +527,6 @@ function LoginPage({ brand, onLogin }: { brand: BrandSettings; onLogin: (user: A
             {role === "admin" ? "Sign in as Admin" : "Sign in as Cashier"}
           </Button>
           <p className="login-security-note">Access is limited to authorized team members.</p>
-        </form>
-      </section>
-    </main>
-  );
-}
-
-function PasswordChange({ brand, hasPin, onDone }: { brand: BrandSettings; hasPin: boolean; onDone: () => void }) {
-  const [currentPassword, setCurrent] = useState("");
-  const [newPassword, setNext] = useState("");
-  const [pin, setPin] = useState("");
-  const mutation = useMutation({
-    mutationFn: () =>
-      api("/auth/change-password", {
-        method: "POST",
-        body: JSON.stringify({ ...(currentPassword ? { currentPassword } : {}), newPassword, ...(!hasPin ? { pin } : {}) }),
-      }),
-    onSuccess: onDone,
-  });
-  return (
-    <main className="login-page">
-      <section className="login-brand-panel" aria-label="Eminent Jay branding">
-        <img
-          className="login-logo"
-          src={brand.logoUrl || "/logo.png"}
-          alt={`${brand.brandName} logo`}
-          width={1600}
-          height={600}
-          fetchPriority="high"
-        />
-        <div className="login-brand-copy">
-          <span className="gold-rule" aria-hidden="true" />
-          <p>Sales, stock and customer care in one place.</p>
-        </div>
-      </section>
-      <section className="login-card">
-        <h1>Set a new password</h1>
-        <p className="muted">Use at least 12 characters to secure your account.</p>
-        <form
-          className="stack-form"
-          inert={mutation.isPending || undefined}
-          onSubmit={(e) => {
-            e.preventDefault();
-            mutation.mutate();
-          }}
-        >
-          <Field label="Current password (if set)">
-            <input
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrent(e.target.value)}
-            />
-          </Field>
-          <Field label="New password">
-            <input
-              type="password"
-              autoComplete="new-password"
-              minLength={12}
-              value={newPassword}
-              onChange={(e) => setNext(e.target.value)}
-              required
-            />
-          </Field>
-          {!hasPin && (
-            <Field label="Create your PIN" hint="Use 4 to 6 digits. You will use it with your username to sign in.">
-              <input
-                type="password"
-                name="pin"
-                autoComplete="new-password"
-                inputMode="numeric"
-                pattern="[0-9]{4,6}"
-                minLength={4}
-                maxLength={6}
-                value={pin}
-                onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))}
-                required
-              />
-            </Field>
-          )}
-          <FormError value={mutation.error} />
-          <Button className="button-full" loading={mutation.isPending}>
-            Save password
-          </Button>
-        </form>
-      </section>
-    </main>
-  );
-}
-
-function PinSetup({ brand, onDone }: { brand: BrandSettings; onDone: () => void }) {
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [pin, setPin] = useState("");
-  const mutation = useMutation({
-    mutationFn: () => api("/auth/pin", {
-      method: "POST",
-      body: JSON.stringify({ currentPassword, pin }),
-    }),
-    onSuccess: onDone,
-  });
-  return (
-    <main className="login-page">
-      <section className="login-brand-panel" aria-label="Eminent Jay branding">
-        <img className="login-logo" src={brand.logoUrl || "/logo.png"} alt={`${brand.brandName} logo`} width={1600} height={600} />
-        <div className="login-brand-copy"><span className="gold-rule" aria-hidden="true" /><p>Sales, stock and customer care in one place.</p></div>
-      </section>
-      <section className="login-card">
-        <h1>Set your sign-in PIN</h1>
-        <p className="muted">Your account needs a PIN before you can continue. Choose 4 to 6 digits.</p>
-        <form className="stack-form" autoComplete="off" inert={mutation.isPending || undefined} onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
-          <Field label="Current password">
-            <input type="password" autoComplete="new-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required />
-          </Field>
-          <Field label="New PIN">
-            <input type="password" name="pin" autoComplete="new-password" inputMode="numeric" pattern="[0-9]{4,6}" minLength={4} maxLength={6} value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))} required />
-          </Field>
-          <FormError value={mutation.error} />
-          <Button className="button-full" loading={mutation.isPending}>Save PIN and continue</Button>
         </form>
       </section>
     </main>
@@ -983,7 +872,8 @@ function POSPage() {
   const showTillSkeleton = useDelayedLoading(isPending || shiftPending);
   const subtotal = cart.reduce((sum, line) => sum + line.variant.priceCents * line.quantity, 0);
   const requestedDiscountCents = Math.max(0, cents(discountAmount));
-  const discountCents = Math.min(subtotal, requestedDiscountCents);
+  const maxDiscountCents = Math.floor((subtotal * MAX_DISCOUNT_PERCENT) / 100);
+  const discountCents = Math.min(maxDiscountCents, requestedDiscountCents);
   const discountedSubtotal = Math.max(0, subtotal - discountCents);
   const taxSettings = catalog?.taxSettings;
   const taxRateBps = taxSettings?.enabled ? Math.max(0, Math.min(10000, taxSettings.rateBps)) : 0;
@@ -991,10 +881,13 @@ function POSPage() {
     ? Math.round((discountedSubtotal * taxRateBps) / (taxSettings?.inclusive ? 10000 + taxRateBps : 10000))
     : 0;
   const total = discountedSubtotal + (taxSettings?.inclusive ? 0 : taxCents);
+  const personalDiscountLimitPct =
+    user.role === "admin" ? MAX_DISCOUNT_PERCENT : user.discountLimitPct;
   const discountOverLimit =
-    subtotal > 0 && discountCents * 100 > subtotal * (user.role === "admin" ? 100 : user.discountLimitPct);
+    subtotal > 0 && discountCents * 100 > subtotal * personalDiscountLimitPct;
   const discountApproved = discountApproval?.status === "approved";
   const discountCanBePaid =
+    requestedDiscountCents <= maxDiscountCents &&
     requestedDiscountCents < subtotal &&
     (!discountCents || !!discountReason.trim()) &&
     (!discountOverLimit || discountApproved);
@@ -1656,14 +1549,18 @@ function POSPage() {
                   Amount due <b>{money(total)}</b>
                 </p>
                 <section className="payment-discount-panel" aria-label="Cart discount">
-                  <Field label="Cart discount (KES)" hint={`Your personal discount limit is ${user.role === "admin" ? 100 : user.discountLimitPct}%.`}>
+                  <Field
+                    label="Cart discount (KES)"
+                    hint={`Maximum ${money(maxDiscountCents)} (${MAX_DISCOUNT_PERCENT}% of the subtotal). ${user.role === "admin" ? "Admin discounts do not need approval." : `Your personal limit is ${personalDiscountLimitPct}%; approval is required above it.`}`}
+                  >
                     <input
-                      type="number"
+                      className="discount-slider"
+                      type="range"
                       min="0"
-                      max={currencyInput(subtotal)}
+                      max={currencyInput(maxDiscountCents)}
                       step="0.01"
-                      inputMode="decimal"
-                      value={discountAmount}
+                      value={currencyInput(discountCents)}
+                      disabled={maxDiscountCents === 0}
                       onChange={(event) => {
                         setDiscountAmount(event.target.value);
                         setDiscountApproval(null);
@@ -1672,7 +1569,15 @@ function POSPage() {
                         approveDiscountMutation.reset();
                       }}
                     />
+                    <output className="discount-slider-value" aria-live="polite">
+                      {money(discountCents)}
+                    </output>
                   </Field>
+                  {requestedDiscountCents > maxDiscountCents && (
+                    <p className="field-hint" role="alert">
+                      Discount cannot exceed {money(maxDiscountCents)} ({MAX_DISCOUNT_PERCENT}% of the subtotal).
+                    </p>
+                  )}
                   {requestedDiscountCents >= subtotal && requestedDiscountCents > 0 && (
                     <p className="field-hint" role="alert">Discount must leave at least KES 0.01 to pay.</p>
                   )}
@@ -1701,7 +1606,11 @@ function POSPage() {
                         <Button
                           className="button-secondary"
                           loading={discountRequestMutation.isPending}
-                          disabled={requestedDiscountCents >= subtotal || !discountReason.trim()}
+                          disabled={
+                            requestedDiscountCents > maxDiscountCents ||
+                            requestedDiscountCents >= subtotal ||
+                            !discountReason.trim()
+                          }
                           onClick={() => discountRequestMutation.mutate()}
                         >
                           Request manager approval
@@ -1718,22 +1627,24 @@ function POSPage() {
                               required
                             />
                           </Field>
-                          <Field label="Administrator PIN">
+                          <Field label="Administrator PIN" hint="Enter exactly 8 digits.">
                             <input
                               type="password"
                               name="discount-approval-pin"
                               autoComplete="new-password"
                               inputMode="numeric"
-                              maxLength={6}
+                              pattern="[0-9]{8}"
+                              minLength={ROLE_PIN_LENGTHS.admin}
+                              maxLength={ROLE_PIN_LENGTHS.admin}
                               value={managerPin}
-                              onChange={(event) => setManagerPin(event.target.value.replace(/\D/g, ""))}
+                              onChange={(event) => setManagerPin(event.target.value.replace(/\D/g, "").slice(0, ROLE_PIN_LENGTHS.admin))}
                               required
                             />
                           </Field>
                           <div className="action-row">
                             <Button
                               loading={approveDiscountMutation.isPending}
-                              disabled={managerUsername.trim().length < 3 || !/^\d{4,6}$/.test(managerPin)}
+                              disabled={managerUsername.trim().length < 3 || !/^\d{8}$/.test(managerPin)}
                               onClick={() => approveDiscountMutation.mutate()}
                             >
                               Approve discount
@@ -2087,6 +1998,7 @@ function ShiftPage() {
   const [movementType, setMovementType] = useState<"in" | "out">("in");
   const [message, setMessage] = useState("");
   const [closeSummary, setCloseSummary] = useState<{
+    closedAt: string;
     expectedCashCents: number;
     countedCashCents: number;
     varianceCents: number;
@@ -2105,12 +2017,12 @@ function ShiftPage() {
           cardCents: number;
           bankCents: number;
         };
-        shift?: { id: string; openedAt: string; openingCashCents: number };
+        shift?: { id: string; openedAt: string; closedAt: string | null; openingCashCents: number };
       }>(body.path, { method: "POST", body: JSON.stringify(body.data) }),
     onSuccess: (result, variables) => {
-      if (variables.path === "/shifts/close" && result.totals) {
-        setCloseSummary(result.totals);
-        setMessage("Shift closed. Review your reconciliation summary.");
+      if (variables.path === "/shifts/close" && result.totals && result.shift?.closedAt) {
+        setCloseSummary({ ...result.totals, closedAt: result.shift.closedAt });
+        setMessage(`Shift closed at ${shopDateTime(result.shift.closedAt)}. Review your reconciliation summary.`);
       } else if (variables.path === "/shifts/open" && result.shift) {
         queryClient.setQueryData<{ shift: { id: string } | null }>(["current-shift"], {
           shift: result.shift,
@@ -2135,7 +2047,7 @@ function ShiftPage() {
       />
       {message && <Notice tone="success">{message}</Notice>}
       {closeSummary && (
-        <section className="metric-grid metric-grid-three section-spaced">
+        <section className="metric-grid section-spaced">
           <Metric
             label="Expected cash"
             value={money(closeSummary.expectedCashCents)}
@@ -2150,6 +2062,11 @@ function ShiftPage() {
             label="Variance"
             value={money(closeSummary.varianceCents)}
             detail={`M-Pesa ${money(closeSummary.mpesaManualCents)} · Bank ${money(closeSummary.bankCents)} · Card ${money(closeSummary.cardCents)}`}
+          />
+          <Metric
+            label="Closed at"
+            value={shopTime(closeSummary.closedAt)}
+            detail={shopDateTime(closeSummary.closedAt)}
           />
         </section>
       )}
@@ -3483,19 +3400,20 @@ function DashboardPage() {
       <section className="surface table-surface section-spaced shift-activity-surface">
         <div className="section-title-row">
           <div>
-            <h2>Shift openings</h2>
-            <p className="muted">See who opened a till and when.</p>
+            <h2>Shift activity</h2>
+            <p className="muted">See when each till was opened and closed.</p>
           </div>
           <span className="status-pill">
             {(shiftActivity?.shifts ?? []).filter((shift) => !shift.closedAt).length} open
           </span>
         </div>
         <DataTable
-          headers={["Staff member", "Opened", "Opening float", "Status"]}
+          headers={["Staff member", "Opened", "Closed", "Opening float", "Status"]}
           empty="No shifts have been opened yet."
           rows={(shiftActivity?.shifts ?? []).map((shift) => [
             shift.seller.name,
             shopDateTime(shift.openedAt),
+            shift.closedAt ? shopDateTime(shift.closedAt) : "—",
             money(shift.openingCashCents),
             <StatusPill value={shift.closedAt ? "closed" : "open now"} />,
           ])}
@@ -4024,6 +3942,7 @@ function UnmatchedPaymentsPanel() {
 }
 
 function StaffAdminPage() {
+  const user = useUser();
   const { data, isPending } = useQuery({
     queryKey: ["staff"],
     queryFn: () => api<{ staff: AppUser[] }>("/auth/staff"),
@@ -4036,6 +3955,11 @@ function StaffAdminPage() {
   const [pin, setPin] = useState("");
   const [discount, setDiscount] = useState("0");
   const [message, setMessage] = useState("");
+  const [accountUsername, setAccountUsername] = useState(user.username);
+  const [accountPassword, setAccountPassword] = useState("");
+  const [editingStaff, setEditingStaff] = useState<AppUser | null>(null);
+  const [staffUsername, setStaffUsername] = useState("");
+  const [staffPassword, setStaffPassword] = useState("");
   const setStatus = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) =>
       api(`/auth/staff/${id}`, { method: "PATCH", body: JSON.stringify({ active }) }),
@@ -4048,7 +3972,7 @@ function StaffAdminPage() {
         body: JSON.stringify({
           name,
           username,
-          temporaryPassword: password,
+          password,
           pin,
           discountLimitPct: Number(discount),
         }),
@@ -4062,56 +3986,120 @@ function StaffAdminPage() {
       void client.invalidateQueries({ queryKey: ["staff"] });
     },
   });
-  if (isPending) return showLoading ? <TableSkeleton columns={5} /> : <div className="loading-reserve" aria-hidden="true" />;
+  const updateOwnAccount = useMutation({
+    mutationFn: () =>
+      api<{ user: AppUser }>("/auth/account", {
+        method: "PATCH",
+        body: JSON.stringify({
+          username: accountUsername.trim(),
+          ...(accountPassword ? { newPassword: accountPassword } : {}),
+        }),
+      }),
+    onSuccess: ({ user: updated }) => {
+      setAccountUsername(updated.username);
+      setAccountPassword("");
+      setMessage("Admin account settings updated.");
+      client.setQueryData(["me"], { user: updated });
+    },
+  });
+  const updateStaffAccount = useMutation({
+    mutationFn: () => {
+      if (!editingStaff) throw new Error("Select a staff account to edit");
+      return api(`/auth/staff/${editingStaff.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          username: staffUsername.trim(),
+          ...(staffPassword ? { newPassword: staffPassword } : {}),
+        }),
+      });
+    },
+    onSuccess: () => {
+      setEditingStaff(null);
+      setStaffPassword("");
+      setMessage("Cashier account settings updated.");
+      void client.invalidateQueries({ queryKey: ["staff"] });
+    },
+  });
+  function editStaff(staff: AppUser) {
+    setEditingStaff(staff);
+    setStaffUsername(staff.username);
+    setStaffPassword("");
+    updateStaffAccount.reset();
+  }
+  if (isPending) return showLoading ? <TableSkeleton columns={4} /> : <div className="loading-reserve" aria-hidden="true" />;
   return (
     <>
       <PageHeader
         eyebrow="ADMINISTRATION"
-        title="Staff accounts"
-        detail="Create and manage shop staff access."
+        title="Account and staff access"
+        detail="Manage your admin account and cashier sign-in details. Cashiers sign in with their four-digit PIN."
       />
       {message && <Notice tone="success">{message}</Notice>}
+      <section className="surface form-surface section-spaced">
+        <h2>Admin account settings</h2>
+        <FormError value={updateOwnAccount.error} />
+        <form
+          className="stack-form account-settings-form"
+          inert={updateOwnAccount.isPending || undefined}
+          onSubmit={(event) => {
+            event.preventDefault();
+            updateOwnAccount.mutate();
+          }}
+        >
+          <Field label="Username">
+            <input value={accountUsername} onChange={(event) => setAccountUsername(event.target.value)} required />
+          </Field>
+          <Field label="New account password" hint="Optional. Leave blank to keep the current password. Use at least 12 characters.">
+            <input
+              type="password"
+              autoComplete="new-password"
+              minLength={12}
+              value={accountPassword}
+              onChange={(event) => setAccountPassword(event.target.value)}
+            />
+          </Field>
+          <Button loading={updateOwnAccount.isPending}>Save admin account</Button>
+        </form>
+      </section>
       <FormError value={create.error} />
       <div className="content-columns">
         <section className="surface form-surface">
-          <h2>Add a staff member</h2>
+          <h2>Add a cashier</h2>
           <form
             className="stack-form"
             inert={create.isPending || undefined}
-            onSubmit={(e) => {
-              e.preventDefault();
+            onSubmit={(event) => {
+              event.preventDefault();
               create.mutate();
             }}
           >
             <Field label="Full name">
-              <input value={name} onChange={(e) => setName(e.target.value)} required />
+              <input value={name} onChange={(event) => setName(event.target.value)} required />
             </Field>
             <Field label="Username">
-              <input value={username} onChange={(e) => setUsername(e.target.value)} required />
+              <input value={username} onChange={(event) => setUsername(event.target.value)} required />
             </Field>
-            <Field
-              label="Temporary password"
-              hint="At least 12 characters. They will change it at first sign in."
-            >
+            <Field label="Account password" hint="At least 12 characters. Account passwords are managed here; cashiers sign in with their PIN.">
               <input
                 type="password"
+                autoComplete="new-password"
                 minLength={12}
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(event) => setPassword(event.target.value)}
                 required
               />
             </Field>
-            <Field label="Sign-in PIN" hint="Staff will use this PIN with their username to sign in.">
+            <Field label="Sign-in PIN" hint="Cashiers use exactly 4 digits with their username to sign in.">
               <input
                 type="password"
                 name="staff-pin"
                 autoComplete="new-password"
                 inputMode="numeric"
-                pattern="[0-9]{4,6}"
+                pattern="[0-9]{4}"
                 minLength={4}
-                maxLength={6}
+                maxLength={4}
                 value={pin}
-                onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))}
+                onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
                 required
               />
             </Field>
@@ -4121,32 +4109,72 @@ function StaffAdminPage() {
                 min="0"
                 max="100"
                 value={discount}
-                onChange={(e) => setDiscount(e.target.value)}
+                onChange={(event) => setDiscount(event.target.value)}
               />
             </Field>
-            <Button loading={create.isPending}>Create staff account</Button>
+            <Button loading={create.isPending}>Create cashier account</Button>
           </form>
         </section>
         <section className="surface table-surface">
-          <h2>Team members</h2>
+          <h2>Cashier accounts</h2>
           <DataTable
-            headers={["Name", "Username", "Status", "Access"]}
+            headers={["Name", "Username", "Status", "Actions"]}
             rows={(data?.staff ?? []).map((staff) => [
               staff.name,
               staff.username,
               <StatusPill value={staff.active === false ? "inactive" : "active"} />,
-              <button
-                className="text-button"
-                disabled={setStatus.isPending}
-                onClick={() => setStatus.mutate({ id: staff.id, active: staff.active === false })}
-              >
-                {staff.active === false ? "Reactivate" : "Deactivate"}
-              </button>,
+              <div className="action-row">
+                <button className="text-button" onClick={() => editStaff(staff)}>Edit account</button>
+                <button
+                  className="text-button"
+                  disabled={setStatus.isPending}
+                  onClick={() => setStatus.mutate({ id: staff.id, active: staff.active === false })}
+                >
+                  {staff.active === false ? "Reactivate" : "Deactivate"}
+                </button>
+              </div>,
             ])}
-            empty="No staff accounts yet."
+            empty="No cashier accounts yet."
           />
         </section>
       </div>
+      {editingStaff && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="edit-cashier-title">
+            <button type="button" className="modal-close" aria-label="Close" onClick={() => setEditingStaff(null)}>
+              <Icon name="x" />
+            </button>
+            <p className="eyebrow">CASHIER ACCOUNT</p>
+            <h2 id="edit-cashier-title">Edit {editingStaff.name}</h2>
+            <FormError value={updateStaffAccount.error} />
+            <form
+              className="stack-form"
+              inert={updateStaffAccount.isPending || undefined}
+              onSubmit={(event) => {
+                event.preventDefault();
+                updateStaffAccount.mutate();
+              }}
+            >
+              <Field label="Username">
+                <input value={staffUsername} onChange={(event) => setStaffUsername(event.target.value)} required />
+              </Field>
+              <Field label="New account password" hint="Optional. Leave blank to keep the current password. Use at least 12 characters.">
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={12}
+                  value={staffPassword}
+                  onChange={(event) => setStaffPassword(event.target.value)}
+                />
+              </Field>
+              <div className="action-row">
+                <button type="button" className="button button-secondary" onClick={() => setEditingStaff(null)}>Cancel</button>
+                <Button loading={updateStaffAccount.isPending}>Save cashier account</Button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </>
   );
 }
@@ -4762,18 +4790,6 @@ export default function App() {
         void queryClient.prefetchQuery({ queryKey: ["catalog"], queryFn: async () => { const fresh = await api<Catalog>("/catalog"); void writeLocal("catalog", fresh).catch(() => undefined); return fresh; } });
       }} />
     );
-  if (user.mustChangePassword)
-    return (
-      <PasswordChange
-        brand={brandSettings}
-        hasPin={user.hasPin}
-        onDone={() => {
-          void queryClient.invalidateQueries({ queryKey: ["me"] });
-        }}
-      />
-    );
-  if (!user.hasPin)
-    return <PinSetup brand={brandSettings} onDone={() => { void queryClient.invalidateQueries({ queryKey: ["me"] }); }} />;
   async function logout() {
     try {
       await api("/auth/logout", { method: "POST", body: "{}" });

@@ -51,7 +51,7 @@ There are exactly **two roles: admin and staff**. There is no manager or supervi
 |---|---|---|
 | Log in, open/close own shift | Y | Y |
 | Use the POS: create sale (cash / M-Pesa / split) | Y (must be logged in) | Y (same POS, recorded under the admin's name) |
-| Apply discount | up to personal limit set by admin | unlimited |
+| Apply discount | up to personal limit set by admin, with a 20% sale cap | up to 20% of the sale subtotal |
 | Hold / resume cart | Y | Y |
 | View product, price, stock | Y | Y |
 | View cost price and profit | N | Y |
@@ -68,10 +68,11 @@ There are exactly **two roles: admin and staff**. There is no manager or supervi
 | Expenses | N | Y |
 | Send SMS campaigns | N | Y |
 | **Create staff accounts** | N | Y |
-| **Edit, reset password/PIN, activate/deactivate, delete staff accounts** | N | Y |
+| **Edit staff usernames/passwords, reset PINs, activate/deactivate, delete staff accounts** | N | Y |
 | **Other staff features** (discount limit, permission toggles, attendance, targets, commission) | N | Y |
 | Settings, integrations, audit log | N | Y |
-| Change own password / PIN | Y | Y |
+| Edit account username/password (admin page) | N | Y |
+| Change own PIN | Y | Y |
 
 Permissions must be enforced **on the server**. Hiding a button in the UI is not security. Implement as a permission list per role (e.g. `sales.create`, `sales.void`, `stock.write`) checked by middleware, not hard-coded role names scattered in code. The admin can switch individual permissions off for a specific staff member (stored as per-user overrides, e.g. no discounts, no customer editing). Overrides can only remove staff permissions, never grant admin-only ones.
 
@@ -136,20 +137,21 @@ The same screens (e.g. product list) render with fewer fields/actions for staff 
 ## 6. Modules and Behaviour
 
 ### 6.1 Authentication and Security
-- **No public sign-up.** Accounts exist only if the admin creates them (see 6.11). Staff cannot create, edit, or delete any account; they can only change their own password/PIN.
+- **No public sign-up.** Accounts exist only if the admin creates them (see 6.11). Staff cannot create or edit accounts. The admin manages their own and cashier usernames/passwords from the Staff page; password changes are not available elsewhere.
 - **Login is mandatory.** Every screen and every API call (except the login page and the Lipwa/SMS provider callbacks) requires an authenticated session. The POS cannot be opened and no sale can be made without a logged-in staff or admin user. Every sale, refund, and shift records which user did it.
-- Login by username/email + password. Staff may also unlock a locked till with a 4-6 digit PIN after the first full login on that device.
-- New and reset accounts get a temporary password and must set their own at first login.
+- Login by username and role-specific PIN only. Cashier/staff PINs contain exactly 4 digits; admin PINs contain exactly 8 digits. Passwords are never accepted at sign-in.
+- Admins set an account password of at least 12 characters when creating a cashier, and can later edit account passwords from the Staff page. Admins can also edit their own username/password there. Cashiers cannot change usernames or account passwords.
+- Every account has its sign-in PIN when created. There is no temporary-password login or forced password-change step.
 - **Offline login:** after a staff member has logged in online on a device once, the device keeps a locally hashed credential so they can unlock the till while offline. The device refreshes its user list at every sync. An account that the admin deactivated or deleted is blocked at the next sync or online check; offline devices may keep an existing session until they reconnect, so enforce a maximum offline session length (e.g. 24 hours) after which an online login is required.
 - Lock screen after configurable inactivity (default 5 min on till). Auto-logout after longer inactivity (default 30 min), with a warning if there are unsynced sales.
 - Failed login rate limiting and temporary lockout. Log failed attempts.
 - Admin accounts: optional two-factor (TOTP). **[ASSUMPTION]** required for admin in Phase 4, optional before.
-- Password reset by admin (generate temp password, force change at next login).
+- Password changes are performed by the admin on the Staff page. Password updates do not reset the account PIN or force the account through a password-change login screen.
 - **Registered devices (tills):** admin can name and approve devices; sales record `device_id`. Unregistered devices can be blocked from POS. (Phase 3.)
 - Security headers, CORS restricted to the app origin, CSRF protection if cookies are used, input validation everywhere, parameterised queries only.
 
 ### 6.2 POS (the till)
-**Who can sell:** both `staff` and `admin`. The admin uses the same POS screen as staff: same login, same cart, payments, receipts, and offline behaviour. When the admin sells, the sale is recorded under the admin's own name, like any other seller. Differences for the admin: unlimited discount (still logged), no approval needed for refunds or voids, and cost price/profit visible.
+**Who can sell:** both `staff` and `admin`. The admin uses the same POS screen as staff: same login, same cart, payments, receipts, and offline behaviour. When the admin sells, the sale is recorded under the admin's own name, like any other seller. Differences for the admin: discounts up to the 20% sale cap without approval, no approval needed for refunds or voids, and cost price/profit visible.
 Layout: product search/scan on the left, cart on the right, payment button always visible. Keyboard friendly.
 
 **Product lookup**
@@ -159,8 +161,8 @@ Layout: product search/scan on the left, cart on the right, payment button alway
 - Show size variant, price, and stock count on each result. Out of stock items are visibly marked and blocked unless the setting `allow_negative_stock` is on.
 
 **Cart**
-- Add/remove items, change quantity, per-line discount (percent or amount) limited by role.
-- Cart-level discount, with a required reason when above a set threshold.
+- Add/remove items, change quantity, per-line discount (percent or amount) limited by role. The combined per-line and cart discount cannot exceed 20% of the pre-discount sale subtotal. The POS uses a KES slider whose maximum is 20% of that subtotal, and the server enforces the same cap.
+- Staff discounts above the staff member's personal limit require an administrator's approval; that approval cannot raise the 20% sale cap. A discount reason is required when above a set threshold.
 - Attach a customer (search by phone or name, or quick-create with phone only).
 - **Hold / park** carts and resume later (stored locally and synced).
 - Notes per sale (e.g. gift wrapping).
@@ -197,7 +199,7 @@ Layout: product search/scan on the left, cart on the right, payment button alway
 **Shift management**
 - Open shift: choose till, enter opening cash float.
 - During shift: sales, refunds, cash in/out (petty cash with reason).
-- Close shift: staff counts cash (by denomination optional). System shows expected cash, M-Pesa total, card total, variance. A shift close summary is saved and printable. Variance beyond a threshold is flagged for admin.
+- Close shift: staff counts cash (by denomination optional). System shows expected cash, M-Pesa total, card total, variance. The closing timestamp is saved with the shift and audit record, shown in the close summary and admin shift activity, and displayed in `Africa/Nairobi`. A shift close summary is saved and printable. Variance beyond a threshold is flagged for admin.
 - Staff cannot sell without an open shift.
 
 ### 6.3 Offline Mode (PWA)
@@ -316,8 +318,8 @@ Required behaviours:
 
 ### 6.11 Staff Management (admin only)
 **Only the admin manages staff accounts.** Staff have no access to this screen or its API endpoints.
-- **Create:** name, username/email, phone, temporary password (and optional PIN), personal discount limit. Role is `staff`. Launch size is 4 staff plus the admin, but do not hard-code a limit.
-- **Edit:** name, contact details, discount limit, permission toggles (e.g. allow/deny discounts, allow/deny customer editing), reset password/PIN, force logout of active sessions.
+- **Create:** name, username/email, phone, account password (at least 12 characters, set by the admin), required 4-digit sign-in PIN, and personal discount limit. Role is `staff`. Launch size is 4 staff plus the admin, but do not hard-code a limit.
+- **Edit:** staff username/password, name, contact details, discount limit, permission toggles (e.g. allow/deny discounts, allow/deny customer editing), reset PIN, force logout of active sessions. The same admin page lets the admin edit their own username/password.
 - **Activate / deactivate:** a deactivated account cannot log in, keeps all its history, and any open sessions end. It can be re-activated.
 - **Delete:** the admin can delete a staff account, with a confirmation. If the account has no history (no sales, shifts, payments, or audit entries), it is removed completely. If it has history, it is **archived**: it disappears from normal lists, cannot log in, and its name stays on historical sales, receipts, and audit logs. Never leave sales without a staff name.
 - **Safety:** the last active admin cannot be deleted or deactivated, and an admin cannot delete themselves. Every action on this screen is audited.
@@ -345,7 +347,7 @@ Required behaviours:
 ### 6.13 Settings
 - Shop profile (name, address, phone, logo, KRA PIN, receipt footer). Default shop/brand name is **Eminent Jay**. The logo upload replaces the default text logo in the app header, login page, and receipts.
 - Tax: VAT on/off, rate, prices tax-inclusive or exclusive, and a VAT category per product type if rates differ. **eTIMS** integration toggle (see 11.2).
-- Payment settings (Lipwa), SMS settings (provider, sender ID, quiet hours), loyalty rates, discount limits per role, refund policy, negative stock policy, receipt numbering format, till/device registry, inactivity timeouts, backup settings.
+- Payment settings (Lipwa), SMS settings (provider, sender ID, quiet hours), loyalty rates, staff discount limits (subject to the 20% sale cap), refund policy, negative stock policy, receipt numbering format, till/device registry, inactivity timeouts, backup settings.
 - Settings changes are audited. Secrets are write-only in the UI.
 
 ### 6.14 Audit Log
@@ -434,7 +436,7 @@ Conventions: plural nouns, cursor/limit pagination, consistent error shape `{ er
 3. Sale creation is **idempotent** on `client_uuid`.
 4. Stock changes only through `stock_movements` inside the same DB transaction as the business event.
 5. Offline sales are never rejected for stock reasons; they are flagged `needs_review` if stock goes negative.
-6. Discounts above the user's limit require admin approval (admin PIN/override at the till) and a reason.
+6. The combined per-line and cart discount cannot exceed 20% of the pre-discount sale subtotal. Staff discounts above the user's personal limit require admin approval (admin PIN/override at the till) and a reason; approval cannot raise the 20% cap.
 7. Refunds require a reason and approval; refunded amount cannot exceed paid amount; restock vs damaged chosen at approval.
 8. Voids are only for same-day/same-shift sales (setting) and need the admin; everything is audited.
 9. Cost price and profit are hidden from `staff`, both in UI and in API responses.

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   cartItemsMatch,
   discountExceedsLimit,
+  discountExceedsMaximum,
   normalizedCartItems,
 } from "../src/sales/discounts.js";
 
@@ -31,5 +32,11 @@ describe("discount request cart binding", () => {
     expect(discountExceedsLimit(10_000, 1_000, 10)).toBe(false);
     expect(discountExceedsLimit(10_000, 1_001, 10)).toBe(true);
     expect(discountExceedsLimit(0, 1, 0)).toBe(false);
+  });
+
+  it("caps all discounts at twenty percent of the subtotal", () => {
+    expect(discountExceedsMaximum(10_000, 2_000)).toBe(false);
+    expect(discountExceedsMaximum(10_000, 2_001)).toBe(true);
+    expect(discountExceedsMaximum(4, 1)).toBe(true);
   });
 });

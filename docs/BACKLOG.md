@@ -63,7 +63,7 @@ Read `/docs/SPEC.md` first. This file lists everything still missing, in the ord
 
 ## N6 [IN SCOPE] Staff management completion (admin only)
 - Staff list with search, status (one pill: Active / Deactivated), last login, role.
-- Create (temporary password, optional PIN, discount limit), edit, reset password/PIN, set discount limit, permission toggles (can only remove staff permissions), force logout, activate/deactivate.
+- Create (admin-managed account password, required 4-digit PIN, discount limit), edit usernames/passwords, reset PIN, set discount limit, permission toggles (can only remove staff permissions), force logout, activate/deactivate. Admin account username/password edits are available on the same page.
 - **Delete:** hard delete if no history, otherwise archive (cannot log in, name stays on records). Last admin cannot be deleted or deactivated. Confirmation dialogs name what will happen.
 - Per-staff activity view (sales, refunds, discounts, cash variance, recent logins).
 - **[ADD-ON]** attendance (clock in/out), targets, commission rules and monthly commission report.

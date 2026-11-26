@@ -18,7 +18,7 @@ services:
         value: main
       - key: ADMIN_SEED_EMAIL
         sync: false
-      - key: ADMIN_SEED_PASSWORD
+      - key: ADMIN_SEED_PIN
         sync: false
       - key: DATABASE_URL
         sync: false

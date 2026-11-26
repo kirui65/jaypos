@@ -1,3 +1,7 @@
+import { MAX_DISCOUNT_PERCENT } from "@eminent/shared";
+
+export { MAX_DISCOUNT_PERCENT };
+
 export type DiscountCartItem = { variantId: string; quantity: number };
 
 export function normalizedCartItems(items: DiscountCartItem[]): DiscountCartItem[] {
@@ -27,4 +31,8 @@ export function discountExceedsLimit(
   limitPct: number,
 ): boolean {
   return subtotalCents > 0 && discountCents * 100 > subtotalCents * limitPct;
+}
+
+export function discountExceedsMaximum(subtotalCents: number, discountCents: number): boolean {
+  return discountExceedsLimit(subtotalCents, discountCents, MAX_DISCOUNT_PERCENT);
 }

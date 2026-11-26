@@ -1,6 +1,20 @@
 # Project Progress
 
-Last updated: 2026-11-26
+Last updated: 2026-11-27
+
+## POS discount cap and recorded shift close time (2026-11-27)
+
+- Added a shared 20% maximum discount rule for every sale, including admin sales. The POS now uses a KES slider capped at 20% of the subtotal; staff can still request approval above their personal limit, but approval cannot bypass the global cap. The API checks discount requests and combined line/cart discounts.
+- Shift closing continues to use the existing database timestamp, now recorded with the same value in the shift audit entry. The close summary displays the Nairobi closing time, and the admin shift activity lists both opening and closing times.
+- Added coverage for the hard discount limit and for persisted/audited shift close timestamps.
+- Checks: `corepack pnpm test` passed (59 passed, 4 database-dependent tests skipped); lint, typecheck, and production build passed. The focused POS discount approval browser test passed. The broader `pos-features` browser file still has two catalog checks with stale selectors. `format:check` reports existing formatting drift in 45 files, so no broad reformat was applied.
+
+## Role-specific PIN sign-in and account management (2026-11-27)
+
+- Cashier/staff PINs are exactly four digits; admin PINs are exactly eight digits. Sign-in accepts only the username and role-specific numeric PIN; the temporary-password option and password-based fallback have been removed.
+- Admins can edit their own username/password and cashier usernames/passwords from the admin Staff page. Cashier passwords are set at account creation, and password edits preserve the cashier PIN. Account edits are audited and invalidate other sessions.
+- New seeded admin accounts receive an eight-digit PIN from `ADMIN_SEED_PIN` or a generated value printed once by the seed command.
+- Checks: `corepack pnpm test` passed (68 passed, 4 database-dependent tests skipped); lint, typecheck, and production build passed. The focused Playwright login test passed with role-specific PIN lengths and no temporary-password option. `format:check` still reports repository-wide formatting drift; no broad reformat was applied.
 
 ## Stock management editing and restoration (2026-11-26)
 
@@ -255,7 +269,7 @@ The web app requires an available PostgreSQL database and seeded shop/admin data
 - Read `/docs/SPEC.md`, then this file, before continuing implementation.
 - Use the approved stack and milestone scope from the user prompt; do not start Phase 2–4 work unless asked.
 - Use `corepack pnpm` commands when a `pnpm` shim is not available.
-- No `.env` or production secrets have been created or committed. The seed generates a one-time admin password if `ADMIN_SEED_PASSWORD` is empty and prints it when creating the initial account.
+- No `.env` or production secrets have been created or committed. The seed accepts `ADMIN_SEED_PIN` or generates and prints the initial admin PIN when creating an account without one.
 - The Render Lipwa API key and channel are configured, and the callback URL remains defined in `render.yaml`. A minimum-value live merchant transaction and callback/status reconciliation remain a `TODO(lipwa)` before production payments.
 
 ## Post-M8 — Loading/performance handoff (2026-11-24)

@@ -64,7 +64,7 @@ describe("cart discount approval", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    adminPinHash = adminPinHash || (await bcrypt.hash("2468", 4));
+    adminPinHash = adminPinHash || (await bcrypt.hash("87654321", 4));
     mockPrisma.authSession.findUnique.mockResolvedValue({
       id: "session-1",
       shopId,
@@ -123,11 +123,22 @@ describe("cart discount approval", () => {
     );
   });
 
+  it("rejects a discount request above twenty percent even when an admin could approve it", async () => {
+    const response = await request(createApp())
+      .post("/api/sales/discount-requests")
+      .set("Cookie", "ej_session=test-session")
+      .send({ items: cart, discountCents: 2_001, reason: "Customer promotion" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("20%");
+    expect(mockTransaction.discountApprovalRequest.create).not.toHaveBeenCalled();
+  });
+
   it("requires an administrator PIN and records who approved the request", async () => {
     const response = await request(createApp())
       .post(`/api/sales/discount-requests/${requestId}/approve`)
       .set("Cookie", "ej_session=test-session")
-      .send({ username: "owner", pin: "2468" });
+      .send({ username: "owner", pin: "87654321" });
 
     expect(response.status).toBe(200);
     expect(response.body.request).toMatchObject({ status: "approved", approvedBy: "Owner" });
@@ -142,7 +153,7 @@ describe("cart discount approval", () => {
     const response = await request(createApp())
       .post(`/api/sales/discount-requests/${requestId}/approve`)
       .set("Cookie", "ej_session=test-session")
-      .send({ username: "owner", pin: "9999" });
+      .send({ username: "owner", pin: "99999999" });
 
     expect(response.status).toBe(401);
     expect(mockTransaction.discountApprovalRequest.updateMany).not.toHaveBeenCalled();

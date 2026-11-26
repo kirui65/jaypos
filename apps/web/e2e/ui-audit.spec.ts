@@ -95,15 +95,19 @@ test('login role selector toggles between Admin and Cashier and submits selected
   await cashierRadio.click();
   await expect(cashierRadio).toHaveAttribute('aria-checked', 'true');
   await expect(adminRadio).toHaveAttribute('aria-checked', 'false');
+  await expect(page.getByLabel('PIN')).toHaveAttribute('maxlength', '4');
   await expect(page.getByRole('button', { name: 'Sign in as Cashier' })).toBeVisible();
 
   await cashierRadio.press('ArrowLeft');
   await expect(adminRadio).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByLabel('PIN')).toHaveAttribute('maxlength', '8');
   await adminRadio.press('ArrowRight');
   await expect(cashierRadio).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByLabel('PIN')).toHaveAttribute('maxlength', '4');
 
   await expect(page.locator('form')).toHaveAttribute('autocomplete', 'off');
   await expect(page.getByLabel('PIN')).toHaveAttribute('autocomplete', 'new-password');
+  await expect(page.getByRole('button', { name: /temporary password/i })).toHaveCount(0);
   await page.getByLabel('Username').fill('cashier');
   await page.getByLabel('PIN').fill('2468');
   await page.getByRole('button', { name: 'Sign in as Cashier' }).click();

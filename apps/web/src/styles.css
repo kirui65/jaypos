@@ -3392,6 +3392,22 @@ button, a, input, select, textarea { transition-duration: 150ms; }
   border-radius: var(--ej-radius-md);
   background: var(--ej-paper);
 }
+.field input.discount-slider {
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--ej-blue);
+  cursor: pointer;
+}
+.field input.discount-slider:focus { outline: 2px solid var(--ej-blue-deep); outline-offset: 1px; }
+.field input.discount-slider:disabled { cursor: not-allowed; }
+.discount-slider-value {
+  color: var(--ej-blue-deep);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
 .discount-approval-box,
 .discount-manager-fields {
   display: grid;

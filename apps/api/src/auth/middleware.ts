@@ -60,15 +60,6 @@ export async function requireAuth(
   }
   request.authUser = session.user as unknown as AuthUser;
   request.sessionId = session.id;
-  const routePath = `${request.baseUrl}${request.path}`;
-  if (
-    request.authUser.mustChangePassword &&
-    !["/api/auth/change-password", "/api/auth/logout", "/api/auth/me"].includes(routePath)
-  ) {
-    return response
-      .status(403)
-      .json({ error: "Password change required", code: "PASSWORD_CHANGE_REQUIRED" });
-  }
   return next();
 }
 

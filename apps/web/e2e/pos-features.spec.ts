@@ -182,19 +182,29 @@ test("checkout requests and uses an administrator-approved cart discount", async
   });
 
   await page.goto(`${process.env.E2E_BASE_URL ?? "http://localhost:4173"}/`);
+  await expect(page.getByText("Opening your shop")).toBeHidden();
+  await expect(page).toHaveURL(/\/shift$/);
+  await page.getByRole("link", { name: "Point of sale", exact: true }).dispatchEvent("click");
   await page
     .getByTestId("product-card")
     .getByRole("button", { name: "Add Jasmine Mist" })
-    .last()
+    .first()
     .click();
   await page.getByRole("button", { name: /Pay ·/ }).click();
   await page.getByRole("button", { name: "Continue to payment" }).click();
-  await page.getByLabel("Cart discount (KES)").fill("10");
+  const discountSlider = page.getByRole("slider", { name: "Cart discount (KES)" });
+  await discountSlider.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    setValue?.call(input, "10");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await expect(discountSlider).toHaveValue("10");
   await page.getByLabel("Discount reason").fill("Customer promotion");
   await page.getByRole("button", { name: "Request manager approval" }).click();
   await expect(page.getByLabel("Administrator username")).toBeVisible();
   await page.getByLabel("Administrator username").fill("owner");
-  await page.getByLabel("Administrator PIN").fill("2468");
+  await page.getByLabel("Administrator PIN").fill("87654321");
   await page.getByRole("button", { name: "Approve discount" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Approved by Owner" })).toBeVisible();
   await page.getByRole("button", { name: "Complete cash sale" }).click();

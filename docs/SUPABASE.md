@@ -33,7 +33,7 @@ corepack pnpm db:migrate
 corepack pnpm db:seed
 ```
 
-The seed creates the shop, roles, sample catalog, and the initial admin account. Set `ADMIN_SEED_PASSWORD` in `.env` before seeding if you want a known development password; otherwise capture the one-time password printed by the seed command.
+The seed creates the shop, roles, sample catalog, and the initial admin account. Set `ADMIN_SEED_PIN` in `.env` to choose its eight-digit sign-in PIN; otherwise capture the generated PIN printed by the seed command. Account passwords are edited from the admin Staff page and are not accepted at sign-in.
 
 ## Data API protection
 

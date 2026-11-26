@@ -4,7 +4,7 @@ import { DiscountApprovalStatus, PaymentMethod, PaymentStatus, Prisma, RefundSta
 import { Router } from "express";
 import { z } from "zod";
 import { canAccess } from "../auth/permissions.js";
-import { normalizeKenyanPhone } from "@eminent/shared";
+import { MAX_DISCOUNT_PERCENT, normalizeKenyanPhone, ROLE_PIN_LENGTHS } from "@eminent/shared";
 import { requirePermission, type AuthenticatedRequest } from "../auth/middleware.js";
 import { prisma } from "../db.js";
 import { businessWhere, sessionShopId, shopData, shopRowWhere, shopWhere } from "../tenant-scope.js";
@@ -16,7 +16,12 @@ import {
   type SalePayment,
 } from "./math.js";
 import { renderInvoiceHtml } from "./invoice-html.js";
-import { cartItemsMatch, discountExceedsLimit, normalizedCartItems } from "./discounts.js";
+import {
+  cartItemsMatch,
+  discountExceedsLimit,
+  discountExceedsMaximum,
+  normalizedCartItems,
+} from "./discounts.js";
 import { calculateProfitability } from "./profitability.js";
 import { planStockDemands } from "./inventory.js";
 import PDFDocument from "pdfkit";
@@ -106,7 +111,7 @@ const discountRequestInput = z.object({
 
 const discountApprovalInput = z.object({
   username: z.string().trim().min(3).max(80),
-  pin: z.string().regex(/^\d{4,6}$/),
+  pin: z.string().regex(new RegExp(`^[0-9]{${ROLE_PIN_LENGTHS.admin}}$`)),
 }).strict();
 
 const documentSettingsInput = z
@@ -617,6 +622,10 @@ salesRouter.post(
     );
     if (parsed.data.discountCents >= subtotalCents)
       return response.status(400).json({ error: "Discount must leave at least KES 0.01 to pay" });
+    if (discountExceedsMaximum(subtotalCents, parsed.data.discountCents))
+      return response.status(400).json({
+        error: `Discount cannot exceed ${MAX_DISCOUNT_PERCENT}% of the subtotal`,
+      });
     if (!discountExceedsLimit(subtotalCents, parsed.data.discountCents, user.discountLimitPct))
       return response.status(400).json({ error: "This discount is within your permitted limit" });
 
@@ -1167,6 +1176,8 @@ salesRouter.post(
           const netTotalCents = total.subtotalCents - total.discountCents;
           if (netTotalCents <= 0)
             throw new Error("Discount must leave at least KES 0.01 to pay");
+          if (discountExceedsMaximum(total.subtotalCents, total.discountCents))
+            throw new Error(`Discount cannot exceed ${MAX_DISCOUNT_PERCENT}% of the subtotal`);
           const lineNetBeforeCart = lines.map(
             ({ input, unitPriceCents }) => unitPriceCents * input.quantity - input.discountCents,
           );
@@ -1184,7 +1195,8 @@ salesRouter.post(
           });
           const taxCents = lineTaxCents.reduce((sum, amount) => sum + amount, 0);
           const saleTotalCents = netTotalCents + (taxInclusive ? 0 : taxCents);
-          const userDiscountLimit = user.role.name === "admin" ? 100 : user.discountLimitPct;
+          const userDiscountLimit =
+            user.role.name === "admin" ? MAX_DISCOUNT_PERCENT : user.discountLimitPct;
           let approvedDiscountRequest: { id: string } | null = null;
           if (parsed.data.discountApprovalRequestId) {
             const approval = await tx.discountApprovalRequest.findFirst({

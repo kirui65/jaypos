@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
 import { DEFAULT_PERMISSION_KEYS, DEFAULT_STAFF_PERMISSION_KEYS } from "@eminent/shared";
@@ -92,28 +92,38 @@ async function main() {
   }
 
   const adminEmail = (process.env.ADMIN_SEED_EMAIL ?? "owner@retail.local").trim().toLowerCase();
-  const adminPassword = process.env.ADMIN_SEED_PASSWORD || randomBytes(18).toString("base64url");
+  const configuredAdminPin = process.env.ADMIN_SEED_PIN?.trim();
+  if (configuredAdminPin && !/^\d{8}$/.test(configuredAdminPin))
+    throw new Error("ADMIN_SEED_PIN must contain exactly 8 digits");
   const existingAdmin = await prisma.user.findUnique({ where: { username: adminEmail } });
   if (existingAdmin && existingAdmin.shopId !== shop.id)
     throw new Error("The configured seed login is already assigned to another shop");
-  const admin =
-    existingAdmin ??
-    (await prisma.user.create({
+  const generatedAdminPin = !existingAdmin?.pinHash && !configuredAdminPin
+    ? String(randomInt(10_000_000, 100_000_000))
+    : undefined;
+  const initialAdminPin = existingAdmin?.pinHash ? undefined : configuredAdminPin ?? generatedAdminPin;
+  const adminPasswordHash = await bcrypt.hash(randomBytes(32).toString("base64url"), 12);
+  const admin = existingAdmin
+    ? await prisma.user.update({
+        where: { id: existingAdmin.id },
+        data: {
+          mustChangePassword: false,
+          ...(initialAdminPin ? { pinHash: await bcrypt.hash(initialAdminPin, 12) } : {}),
+        },
+      })
+    : await prisma.user.create({
       data: {
         shopId: shop.id,
         roleId: roleByName.get("admin")!.id,
         name: "Shop Owner",
         username: adminEmail,
         email: adminEmail,
-        passwordHash: await bcrypt.hash(adminPassword, 12),
-        mustChangePassword: true,
+        passwordHash: adminPasswordHash,
+        pinHash: await bcrypt.hash(initialAdminPin!, 12),
+        mustChangePassword: false,
       },
-    }));
-  if (!existingAdmin) {
-    if (!process.env.ADMIN_SEED_PASSWORD) {
-      process.stdout.write(`One-time admin password: ${adminPassword}\n`);
-    }
-  }
+    });
+  if (generatedAdminPin) process.stdout.write(`Initial admin PIN: ${generatedAdminPin}\n`);
 
   const departmentDefinitions = [
     { code: "men", name: "Men" },

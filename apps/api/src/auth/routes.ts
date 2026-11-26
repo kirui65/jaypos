@@ -2,7 +2,13 @@ import { createHash, randomBytes } from "node:crypto";
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { DEFAULT_PERMISSION_KEYS, DEFAULT_STAFF_PERMISSION_KEYS } from "@eminent/shared";
+import {
+  DEFAULT_PERMISSION_KEYS,
+  DEFAULT_STAFF_PERMISSION_KEYS,
+  isRolePin,
+  ROLE_PIN_LENGTHS,
+  rolePinLength,
+} from "@eminent/shared";
 import { prisma } from "../db.js";
 import {
   clearSessionCookie,
@@ -19,13 +25,8 @@ import { configuredShopId } from "../shop-settings.js";
 const sessionLifetimeMs = 8 * 60 * 60 * 1000;
 const loginInput = z.object({
   identifier: z.string().trim().min(1).max(254),
-  pin: z.string().min(1).max(200),
+  pin: z.string().regex(/^\d{4,8}$/),
   role: z.enum(["admin", "staff"]).optional(),
-});
-const passwordInput = z.object({
-  currentPassword: z.string().min(1).max(200).optional(),
-  newPassword: z.string().min(12).max(200),
-  pin: z.string().regex(/^\d{4,6}$/).optional(),
 });
 const createStaffInput = z.object({
   name: z.string().trim().min(1).max(120),
@@ -37,12 +38,20 @@ const createStaffInput = z.object({
     .regex(/^[a-zA-Z0-9._@+-]+$/),
   email: z.string().email().max(254).optional(),
   phone: z.string().trim().max(30).optional(),
-  temporaryPassword: z.string().min(12).max(200),
-  pin: z.string().regex(/^\d{4,6}$/),
+  password: z.string().min(12).max(200),
+  pin: z.string().regex(new RegExp(`^[0-9]{${ROLE_PIN_LENGTHS.staff}}$`)),
   discountLimitPct: z.number().int().min(0).max(100).default(0),
 });
 const editStaffInput = z
   .object({
+    username: z
+      .string()
+      .trim()
+      .min(3)
+      .max(80)
+      .regex(/^[a-zA-Z0-9._@+-]+$/)
+      .optional(),
+    newPassword: z.string().min(12).max(200).optional(),
     name: z.string().trim().min(1).max(120).optional(),
     email: z.string().email().max(254).nullable().optional(),
     phone: z.string().trim().max(30).nullable().optional(),
@@ -52,6 +61,19 @@ const editStaffInput = z
     forceLogout: z.boolean().optional(),
   })
   .strict();
+const accountSettingsInput = z
+  .object({
+    username: z
+      .string()
+      .trim()
+      .min(3)
+      .max(80)
+      .regex(/^[a-zA-Z0-9._@+-]+$/)
+      .optional(),
+    newPassword: z.string().min(12).max(200).optional(),
+  })
+  .strict()
+  .refine((value) => value.username !== undefined || value.newPassword !== undefined);
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -69,7 +91,6 @@ function safeUser(user: {
   email: string | null;
   role: { name: string };
   active?: boolean;
-  mustChangePassword: boolean;
   pinHash: string | null;
   discountLimitPct: number;
   permissionOverridesJson: unknown;
@@ -92,7 +113,6 @@ function safeUser(user: {
     email: user.email,
     role: user.role.name,
     active: user.active ?? true,
-    mustChangePassword: user.mustChangePassword,
     hasPin: Boolean(user.pinHash),
     discountLimitPct: user.discountLimitPct,
     permissions: [...permissions],
@@ -132,9 +152,11 @@ authRouter.post("/login", async (request, response) => {
     !!user &&
     user.active &&
     !user.archivedAt &&
-    (user.pinHash
-      ? /^\d{4,6}$/.test(parsed.data.pin) && (await bcrypt.compare(parsed.data.pin, user.pinHash))
-      : await bcrypt.compare(parsed.data.pin, user.passwordHash));
+    Boolean(
+      user.pinHash &&
+        isRolePin(parsed.data.pin, user.role.name) &&
+        (await bcrypt.compare(parsed.data.pin, user.pinHash)),
+    );
   await prisma.loginAttempt.create({
     data: businessData(shopId, { identifier, ip: clientIp(request), succeeded: valid }),
   });
@@ -226,55 +248,14 @@ authRouter.post("/logout", async (request: AuthenticatedRequest, response) => {
   return response.status(204).end();
 });
 
-authRouter.post("/change-password", async (request: AuthenticatedRequest, response) => {
-  const parsed = passwordInput.safeParse(request.body);
-  if (!parsed.success || !request.authUser)
-    return response.status(400).json({ error: "Password must be at least 12 characters and PIN must contain 4 to 6 digits" });
-  const user = await prisma.user.findFirstOrThrow({
-    where: shopWhere(request, { id: request.authUser.id }),
-  });
-  if (
-    !user.mustChangePassword &&
-    (!parsed.data.currentPassword ||
-      !(await bcrypt.compare(parsed.data.currentPassword, user.passwordHash)))
-  )
-    return response.status(401).json({ error: "Current password is incorrect" });
-  if (!user.pinHash && !parsed.data.pin)
-    return response.status(400).json({ error: "Set a 4 to 6 digit PIN before continuing" });
-  const passwordHash = await bcrypt.hash(parsed.data.newPassword, 12);
-  await prisma.$transaction([
-    prisma.user.update({
-      where: shopWhere(request, { id: user.id }),
-      data: {
-        passwordHash,
-        mustChangePassword: false,
-        ...(parsed.data.pin ? { pinHash: await bcrypt.hash(parsed.data.pin, 12) } : {}),
-      },
-    }),
-    prisma.authSession.updateMany({
-      where: shopWhere(request, {
-        userId: user.id,
-        ...(request.sessionId ? { id: { not: request.sessionId } } : {}),
-        revokedAt: null,
-      }),
-      data: { revokedAt: new Date() },
-    }),
-    prisma.auditLog.create({
-      data: shopData(request, {
-        userId: user.id,
-        action: "auth.password_changed",
-        entity: "user",
-        entityId: user.id,
-      }),
-    }),
-  ]);
-  return response.json({ ok: true });
-});
-
 authRouter.post("/pin-unlock", async (request: AuthenticatedRequest, response) => {
-  const parsed = z.object({ pin: z.string().regex(/^\d{4,6}$/) }).safeParse(request.body);
+  const parsed = z.object({ pin: z.string().regex(/^\d{4,8}$/) }).safeParse(request.body);
   if (!parsed.success || !request.authUser)
     return response.status(400).json({ error: "Invalid PIN" });
+  if (!isRolePin(parsed.data.pin, request.authUser.role.name))
+    return response.status(400).json({
+      error: `PIN must contain exactly ${rolePinLength(request.authUser.role.name)} digits`,
+    });
   const user = await prisma.user.findFirst({
     where: shopWhere(request, { id: request.authUser.id }),
   });
@@ -326,19 +307,26 @@ authRouter.post("/pin-unlock", async (request: AuthenticatedRequest, response) =
 authRouter.post("/pin", async (request: AuthenticatedRequest, response) => {
   const parsed = z
     .object({
-      pin: z.string().regex(/^\d{4,6}$/),
+      pin: z.string().regex(/^\d{4,8}$/),
       currentPassword: z.string().min(1).max(200).optional(),
       currentPin: z
         .string()
-        .regex(/^\d{4,6}$/)
+        .regex(/^\d{4,8}$/)
         .optional(),
     })
     .safeParse(request.body);
   if (!parsed.success || !request.authUser)
-    return response.status(400).json({ error: "PIN must contain 4 to 6 digits" });
+    return response.status(400).json({ error: "PIN must contain only digits" });
   const user = await prisma.user.findFirstOrThrow({
     where: shopWhere(request, { id: request.authUser.id }),
   });
+  if (
+    !isRolePin(parsed.data.pin, request.authUser.role.name) ||
+    (parsed.data.currentPin && !isRolePin(parsed.data.currentPin, request.authUser.role.name))
+  )
+    return response.status(400).json({
+      error: `PIN must contain exactly ${rolePinLength(request.authUser.role.name)} digits`,
+    });
   const passwordValid = parsed.data.currentPassword
     ? await bcrypt.compare(parsed.data.currentPassword, user.passwordHash)
     : false;
@@ -364,6 +352,63 @@ authRouter.post("/pin", async (request: AuthenticatedRequest, response) => {
 });
 
 const adminOnly = requirePermission("staff.manage");
+authRouter.patch("/account", adminOnly, async (request: AuthenticatedRequest, response) => {
+  const parsed = accountSettingsInput.safeParse(request.body);
+  if (!parsed.success || !request.authUser)
+    return response.status(400).json({ error: "Provide a valid username or a password of at least 12 characters" });
+  const actor = request.authUser;
+  if (actor.role.name !== "admin") return response.status(403).json({ error: "Permission denied" });
+  const existing = await prisma.user.findFirst({
+    where: shopWhere(request, { id: actor.id, role: { name: "admin" } }),
+    include: { role: true },
+  });
+  if (!existing) return response.status(404).json({ error: "Admin account not found" });
+  const normalizedUsername = parsed.data.username?.toLowerCase();
+  if (normalizedUsername) {
+    const duplicate = await prisma.user.findFirst({
+      where: {
+        username: { equals: normalizedUsername, mode: "insensitive" },
+        id: { not: existing.id },
+      },
+    });
+    if (duplicate) return response.status(409).json({ error: "Username is already in use" });
+  }
+  const passwordChanged = parsed.data.newPassword !== undefined;
+  const updated = await prisma.$transaction(async (transaction) => {
+    const saved = await transaction.user.update({
+      where: shopWhere(request, { id: existing.id }),
+      data: {
+        ...(normalizedUsername ? { username: normalizedUsername } : {}),
+        ...(parsed.data.newPassword
+          ? { passwordHash: await bcrypt.hash(parsed.data.newPassword, 12) }
+          : {}),
+        mustChangePassword: false,
+      },
+      include: { role: true },
+    });
+    await transaction.authSession.updateMany({
+      where: shopWhere(request, {
+        userId: existing.id,
+        ...(request.sessionId ? { id: { not: request.sessionId } } : {}),
+        revokedAt: null,
+      }),
+      data: { revokedAt: new Date() },
+    });
+    await transaction.auditLog.create({
+      data: shopData(request, {
+        userId: actor.id,
+        action: "auth.account_updated",
+        entity: "user",
+        entityId: saved.id,
+        beforeJson: { username: existing.username },
+        afterJson: { username: saved.username, passwordChanged },
+      }),
+    });
+    return saved;
+  });
+  return response.json({ user: safeUser(updated) });
+});
+
 authRouter.get("/staff", adminOnly, async (request: AuthenticatedRequest, response) => {
   const staff = await prisma.user.findMany({
     where: shopWhere(request, { role: { name: "staff" }, archivedAt: null }),
@@ -401,8 +446,9 @@ authRouter.post("/staff", adminOnly, async (request: AuthenticatedRequest, respo
           username: normalizedUsername,
           email: normalizedEmail,
           phone: parsed.data.phone ?? null,
-          passwordHash: await bcrypt.hash(parsed.data.temporaryPassword, 12),
-          pinHash: parsed.data.pin ? await bcrypt.hash(parsed.data.pin, 12) : null,
+          passwordHash: await bcrypt.hash(parsed.data.password, 12),
+          pinHash: await bcrypt.hash(parsed.data.pin, 12),
+          mustChangePassword: false,
           discountLimitPct: parsed.data.discountLimitPct,
           createdBy: actor.id,
         }),
@@ -441,6 +487,16 @@ authRouter.patch("/staff/:id", adminOnly, async (request: AuthenticatedRequest, 
     }),
   });
   if (!existing) return response.status(404).json({ error: "Staff account not found" });
+  const normalizedUsername = parsed.data.username?.toLowerCase();
+  if (normalizedUsername) {
+    const duplicate = await prisma.user.findFirst({
+      where: {
+        username: { equals: normalizedUsername, mode: "insensitive" },
+        id: { not: existing.id },
+      },
+    });
+    if (duplicate) return response.status(409).json({ error: "Username is already in use" });
+  }
   if (parsed.data.email !== undefined && parsed.data.email !== null) {
     const email = parsed.data.email.toLowerCase();
     const duplicate = await prisma.user.findFirst({
@@ -448,16 +504,20 @@ authRouter.patch("/staff/:id", adminOnly, async (request: AuthenticatedRequest, 
     });
     if (duplicate) return response.status(409).json({ error: "Email is already in use" });
   }
+  const { newPassword, permissionOverrides, forceLogout, ...fields } = parsed.data;
+  delete fields.username;
   const changes: Record<string, unknown> = {
-    ...parsed.data,
-    ...(parsed.data.email ? { email: parsed.data.email.toLowerCase() } : {}),
+    ...fields,
+    ...(normalizedUsername ? { username: normalizedUsername } : {}),
+    ...(parsed.data.email !== undefined
+      ? { email: parsed.data.email?.toLowerCase() ?? null }
+      : {}),
+    ...(newPassword ? { passwordHash: await bcrypt.hash(newPassword, 12), mustChangePassword: false } : {}),
   };
-  delete changes.permissionOverrides;
-  delete changes.forceLogout;
-  if (parsed.data.permissionOverrides !== undefined)
-    changes.permissionOverridesJson = parsePermissionRemovals(parsed.data.permissionOverrides);
+  if (permissionOverrides !== undefined)
+    changes.permissionOverridesJson = parsePermissionRemovals(permissionOverrides);
   const updated = await prisma.$transaction(async (transaction) => {
-    if (parsed.data.active === false || parsed.data.forceLogout)
+    if (parsed.data.active === false || forceLogout || normalizedUsername || newPassword)
       await transaction.authSession.updateMany({
         where: shopWhere(request, { userId: existing.id, revokedAt: null }),
         data: { revokedAt: new Date() },
@@ -475,6 +535,7 @@ authRouter.patch("/staff/:id", adminOnly, async (request: AuthenticatedRequest, 
         entityId: saved.id,
         beforeJson: {
           name: existing.name,
+          username: existing.username,
           email: existing.email,
           phone: existing.phone,
           active: existing.active,
@@ -483,12 +544,14 @@ authRouter.patch("/staff/:id", adminOnly, async (request: AuthenticatedRequest, 
         },
         afterJson: {
           name: saved.name,
+          username: saved.username,
           email: saved.email,
           phone: saved.phone,
           active: saved.active,
           discountLimitPct: saved.discountLimitPct,
           permissionOverrides: saved.permissionOverridesJson,
-          forceLogout: parsed.data.forceLogout ?? false,
+          passwordChanged: Boolean(newPassword),
+          forceLogout: forceLogout ?? false,
         },
       }),
     });
@@ -498,52 +561,6 @@ authRouter.patch("/staff/:id", adminOnly, async (request: AuthenticatedRequest, 
 });
 
 authRouter.post(
-  "/staff/:id/reset-password",
-  adminOnly,
-  async (request: AuthenticatedRequest, response) => {
-    const parsed = z
-      .object({ temporaryPassword: z.string().min(12).max(200) })
-      .safeParse(request.body);
-    if (!parsed.success)
-      return response
-        .status(400)
-        .json({ error: "Temporary password must be at least 12 characters" });
-    const actor = request.authUser!;
-    const target = await prisma.user.findFirst({
-      where: shopWhere(request, {
-        id: request.params.id ?? "",
-        role: { name: "staff" },
-        archivedAt: null,
-      }),
-    });
-    if (!target) return response.status(404).json({ error: "Staff account not found" });
-    await prisma.$transaction([
-      prisma.user.update({
-        where: shopWhere(request, { id: target.id }),
-        data: {
-          passwordHash: await bcrypt.hash(parsed.data.temporaryPassword, 12),
-          mustChangePassword: true,
-          pinHash: null,
-        },
-      }),
-      prisma.authSession.updateMany({
-        where: shopWhere(request, { userId: target.id, revokedAt: null }),
-        data: { revokedAt: new Date() },
-      }),
-      prisma.auditLog.create({
-        data: shopData(request, {
-          userId: actor.id,
-          action: "staff.password_reset",
-          entity: "user",
-          entityId: target.id,
-        }),
-      }),
-    ]);
-    return response.json({ ok: true });
-  },
-);
-
-authRouter.post(
   "/staff/:id/reset-pin",
   adminOnly,
   async (request: AuthenticatedRequest, response) => {
@@ -551,14 +568,13 @@ authRouter.post(
       .object({
         pin: z
           .string()
-          .regex(/^\d{4,6}$/)
-          .nullable(),
+          .regex(new RegExp(`^[0-9]{${ROLE_PIN_LENGTHS.staff}}$`)),
       })
       .safeParse(request.body);
     if (!parsed.success)
       return response
         .status(400)
-        .json({ error: "PIN must contain 4 to 6 digits, or null to clear it" });
+        .json({ error: "Cashier PIN must contain exactly 4 digits" });
     const actor = request.authUser!;
     const target = await prisma.user.findFirst({
       where: shopWhere(request, {
@@ -571,7 +587,7 @@ authRouter.post(
     await prisma.$transaction([
       prisma.user.update({
         where: shopWhere(request, { id: target.id }),
-        data: { pinHash: parsed.data.pin ? await bcrypt.hash(parsed.data.pin, 12) : null },
+        data: { pinHash: await bcrypt.hash(parsed.data.pin, 12) },
       }),
       prisma.auditLog.create({
         data: shopData(request, {

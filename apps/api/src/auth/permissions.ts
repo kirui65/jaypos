@@ -7,7 +7,6 @@ export type AuthUser = {
   discountLimitPct: number;
   role: { name: "admin" | "staff"; permissions: { permission: { key: string } }[] };
   permissionOverridesJson: unknown;
-  mustChangePassword: boolean;
 };
 
 export function getEffectivePermissions(user: AuthUser): Set<string> {

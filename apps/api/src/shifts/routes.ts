@@ -221,10 +221,11 @@ shiftsRouter.post(
           outCents,
         );
         const varianceCents = parsed.data.countedCashCents - expectedCashCents;
+        const closedAt = new Date();
         const updatedCount = await tx.shift.updateMany({
           where: shopWhere(request, { id: shift.id, closedAt: null }),
           data: {
-            closedAt: new Date(),
+            closedAt,
             expectedCashCents,
             countedCashCents: parsed.data.countedCashCents,
             varianceCents,
@@ -243,6 +244,7 @@ shiftsRouter.post(
             entityId: shift.id,
             beforeJson: { closedAt: null },
             afterJson: {
+              closedAt: closedAt.toISOString(),
               expectedCashCents,
               countedCashCents: parsed.data.countedCashCents,
               varianceCents,
